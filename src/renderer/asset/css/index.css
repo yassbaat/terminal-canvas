@@ -1,0 +1,210 @@
+@import './variables.css';
+
+/* ===== Reset & Base ===== */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--tc-font-sans);
+  font-size: var(--tc-font-size-base);
+  color: var(--tc-text-primary);
+  background: var(--tc-bg-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+}
+
+/* ===== Scrollbar ===== */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--tc-border-color);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--tc-border-focus);
+}
+
+/* ===== Vue Flow Overrides ===== */
+.vue-flow {
+  background: var(--tc-bg-primary);
+  font-family: var(--tc-font-sans);
+}
+
+.vue-flow__node {
+  border: none;
+  padding: 0;
+}
+
+.vue-flow__node.selected {
+  z-index: var(--tc-z-node-selected);
+}
+
+.vue-flow__node.selected .terminal-node-inner {
+  box-shadow: 0 0 0 2px var(--tc-accent), var(--tc-shadow-lg);
+}
+
+.vue-flow__background {
+  background-color: var(--tc-bg-primary);
+}
+
+.vue-flow__controls {
+  background: var(--tc-bg-card);
+  border: 1px solid var(--tc-border-color);
+  border-radius: var(--tc-border-radius-sm);
+  overflow: hidden;
+}
+
+.vue-flow__controls-button {
+  background: var(--tc-bg-card);
+  color: var(--tc-text-secondary);
+  border: none;
+  border-bottom: 1px solid var(--tc-border-color);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background var(--tc-transition-fast);
+}
+
+.vue-flow__controls-button:hover {
+  background: var(--tc-bg-hover);
+  color: var(--tc-text-primary);
+}
+
+.vue-flow__controls-button svg {
+  fill: currentColor;
+  width: 14px;
+  height: 14px;
+}
+
+.vue-flow__minimap {
+  background: var(--tc-bg-card);
+  border: 1px solid var(--tc-border-color);
+  border-radius: var(--tc-border-radius-sm);
+}
+
+/* ===== xterm.js Overrides ===== */
+.xterm {
+  cursor: text;
+  padding: 0 !important;
+}
+
+.xterm-viewport {
+  background-color: var(--tc-terminal-bg) !important;
+}
+
+.xterm-screen canvas {
+  image-rendering: pixelated;
+}
+
+/* ===== Utility Classes ===== */
+.tc-flex {
+  display: flex;
+}
+
+.tc-flex-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.tc-flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tc-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tc-mono {
+  font-family: var(--tc-font-mono);
+}
+
+.tc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--tc-border-color);
+  border-radius: var(--tc-border-radius-sm);
+  background: var(--tc-bg-card);
+  color: var(--tc-text-secondary);
+  font-size: var(--tc-font-size-sm);
+  cursor: pointer;
+  transition: all var(--tc-transition-fast);
+  font-family: var(--tc-font-sans);
+}
+
+.tc-btn:hover {
+  background: var(--tc-bg-hover);
+  color: var(--tc-text-primary);
+  border-color: var(--tc-border-focus);
+}
+
+.tc-btn-primary {
+  background: var(--tc-accent);
+  color: white;
+  border-color: var(--tc-accent);
+}
+
+.tc-btn-primary:hover {
+  background: var(--tc-accent-hover);
+  border-color: var(--tc-accent-hover);
+}
+
+.tc-btn-sm {
+  padding: 4px 8px;
+  font-size: var(--tc-font-size-xs);
+}
+
+.tc-btn-icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.tc-input {
+  padding: 6px 10px;
+  border: 1px solid var(--tc-border-color);
+  border-radius: var(--tc-border-radius-sm);
+  background: var(--tc-bg-secondary);
+  color: var(--tc-text-primary);
+  font-size: var(--tc-font-size-base);
+  font-family: var(--tc-font-sans);
+  outline: none;
+  transition: border-color var(--tc-transition-fast);
+}
+
+.tc-input:focus {
+  border-color: var(--tc-accent);
+}
+
+.tc-input::placeholder {
+  color: var(--tc-text-muted);
+}
