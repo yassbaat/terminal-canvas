@@ -25,7 +25,7 @@ const DEFAULT_SETTINGS: WorkspaceSettings = {
 export const useWorkspaceStore = defineStore("workspace", () => {
   // ─── State ───────────────────────────────────────────────────────
   const currentWorkspace = ref<Workspace | null>(null);
-  const workspaceList = ref<Array<{ id: string; name: string; updatedAt: number }>>([]);
+  const workspaceList = ref<Array<{ id: string; name: string; updatedAt: number; terminalCount?: number; groupCount?: number }>>([]);
   const isSaving = ref(false);
   const lastSavedAt = ref<number | null>(null);
   const selectedNoteIds = ref<Set<string>>(new Set());
@@ -102,6 +102,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
       await window.api.workspace.save({ workspace: currentWorkspace.value as Workspace });
       lastSavedAt.value = Date.now();
+      // Remember this as the last opened workspace
+      localStorage.setItem("terminal-canvas:lastWorkspaceId", currentWorkspace.value!.id);
     } finally {
       isSaving.value = false;
     }
@@ -124,6 +126,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
     currentWorkspace.value = ws;
     lastSavedAt.value = Date.now();
+    localStorage.setItem("terminal-canvas:lastWorkspaceId", ws.id);
 
     const terminalStore = useTerminalStore();
     terminalStore.sessions = new Map();
@@ -151,6 +154,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
           terminalStore.updateSessionName(session.id, saved.manualName);
         } else if (saved.autoName) {
           terminalStore.setAutoName(session.id, saved.autoName);
+        }
+        // Preserve saved status and buffer snapshot for restoration
+        const s = terminalStore.sessions.get(session.id);
+        if (s) {
+          if (saved.status) s.status = saved.status;
+          if (saved.bufferSnapshot) {
+            s.bufferSnapshot = saved.bufferSnapshot;
+            s.restoredFromSnapshot = true;
+          }
         }
       } catch (err) {
         console.error("[Workspace] Failed to restore terminal", saved.id, err);
@@ -545,4 +557,68 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   /**
    * Apply partial settings update to the current workspace.
- 
+   */
+  function updateSettings(patch: Partial<WorkspaceSettings>): void {
+    if (!currentWorkspace.value) return;
+    Object.assign(currentWorkspace.value.settings, patch);
+    currentWorkspace.value.updatedAt = Date.now();
+  }
+
+  /**
+   * Rename the current workspace.
+   */
+  function renameWorkspace(name: string): void {
+    if (!currentWorkspace.value) return;
+    currentWorkspace.value.name = name;
+    currentWorkspace.value.updatedAt = Date.now();
+  }
+
+  return {
+    // State
+    currentWorkspace,
+    workspaceList,
+    isSaving,
+    lastSavedAt,
+    // Getters
+    viewport,
+    settings,
+    workspaceName,
+    isDirty,
+    groups,
+    groupCount,
+    edges,
+    stickyNotes,
+    selectedNoteIds,
+    selectedGroupIds,
+    // Actions
+    createNewWorkspace,
+    saveCurrentWorkspace,
+    loadWorkspaceList,
+    loadWorkspace,
+    deleteWorkspace,
+    updateViewport,
+    addGroup,
+    createGroup,
+    updateGroup,
+    removeGroup,
+    addTerminalToGroup,
+    removeTerminalFromGroup,
+    groupSelectedTerminals,
+    addEdge,
+    removeEdge,
+    removeEdgesForTerminal,
+    createStickyNote,
+    updateStickyNote,
+    removeStickyNote,
+    unpinNotesForTerminal,
+    updateSettings,
+    renameWorkspace,
+    setNoteSelected,
+    toggleNoteSelected,
+    clearNoteSelection,
+    setGroupSelected,
+    toggleGroupSelected,
+    clearGroupSelection,
+    fitViewTargetId,
+  };
+});

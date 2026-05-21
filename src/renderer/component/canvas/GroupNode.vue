@@ -35,11 +35,26 @@ const groupStyle = computed(() => ({
 // Count of terminals in this group
 const terminalCount = computed(() => props.data.group.terminalIds.length);
 
+// Get the note IDs in this group
+const noteIds = computed(() => props.data.group.noteIds || []);
+
+// Get the notes that belong to this group
+const groupedNotes = computed(() =>
+  (props.data.group.noteIds || [])
+    .map((nid) => workspaceStore.stickyNotes.find((n) => n.id === nid))
+    .filter(Boolean)
+);
+
 // Get the terminal sessions that belong to this group
 const groupedSessions = computed(() =>
   props.data.group.terminalIds
     .map((tid) => terminalStore.sessions.get(tid))
     .filter(Boolean)
+);
+
+// Get child groups nested inside this group
+const childGroups = computed(() =>
+  workspaceStore.groups.filter((g) => g.parentId === props.id)
 );
 
 /**
@@ -82,6 +97,16 @@ watch(
             });
           }
         }
+        // Move grouped notes with the group
+        for (const nid of noteIds.value) {
+          const note = workspaceStore.stickyNotes.find((n) => n.id === nid);
+          if (note) {
+            workspaceStore.updateStickyNote(nid, {
+              x: note.x + dx,
+              y: note.y + dy,
+            });
+          }
+        }
       }
     }
   },
@@ -109,8 +134,19 @@ watch(
       </button>
     </div>
 
-    <!-- Group content: list of terminals in this group -->
+    <!-- Group content: list of terminals, notes, and child groups -->
     <div v-show="!isCollapsed" class="group-content">
+      <!-- Child groups (nested) -->
+      <div
+        v-for="cg in childGroups"
+        :key="cg.id"
+        class="group-child-group"
+      >
+        <span class="child-group-icon">&#128193;</span>
+        <span class="child-group-name">{{ cg.name }}</span>
+      </div>
+
+      <!-- Terminals -->
       <div
         v-for="session in groupedSessions"
         :key="session!.id"
@@ -132,12 +168,22 @@ watch(
         </button>
       </div>
 
+      <!-- Notes -->
+      <div
+        v-for="note in groupedNotes"
+        :key="note!.id"
+        class="group-note-item"
+      >
+        <span class="group-note-icon">&#128221;</span>
+        <span class="group-note-text">{{ note!.text ? note!.text.split('\n')[0].slice(0, 30) : 'Empty note' }}</span>
+      </div>
+
       <!-- Empty state -->
       <div
-        v-if="groupedSessions.length === 0"
+        v-if="groupedSessions.length === 0 && groupedNotes.length === 0 && childGroups.length === 0"
         class="group-empty"
       >
-        Drop terminals here
+        Drop items here
       </div>
     </div>
   </div>
@@ -320,5 +366,53 @@ watch(
   border: 1px dashed var(--tc-border-color);
   border-radius: var(--tc-border-radius-sm);
   margin-top: 4px;
+}
+
+.group-child-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: var(--tc-border-radius-sm);
+  background: var(--tc-bg-secondary);
+  font-size: var(--tc-font-size-xs);
+  color: var(--tc-text-secondary);
+}
+
+.child-group-icon {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.child-group-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.group-note-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: var(--tc-border-radius-sm);
+  background: var(--tc-bg-card);
+  font-size: var(--tc-font-size-xs);
+  color: var(--tc-text-secondary);
+  font-style: italic;
+}
+
+.group-note-icon {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.group-note-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

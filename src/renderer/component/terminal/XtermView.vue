@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, watch, nextTick } from "vue";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import { useTerminalStore } from "@renderer/store/terminal";
 
 const props = defineProps<{
@@ -27,6 +28,7 @@ function handleFocus() {
 
 let xterm: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
+let serializeAddon: SerializeAddon | null = null;
 let dataUnsubscribe: (() => void) | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let focusInHandler: (() => void) | null = null;
@@ -75,7 +77,9 @@ onMounted(async () => {
   });
 
   fitAddon = new FitAddon();
+  serializeAddon = new SerializeAddon();
   xterm.loadAddon(fitAddon);
+  xterm.loadAddon(serializeAddon);
 
   // Mount to DOM
   xterm.open(terminalContainer.value);
@@ -160,11 +164,37 @@ onMounted(async () => {
     resizeObserver.observe(terminalContainer.value);
   }
 
+  // Register snapshot callback so workspace save can capture this terminal's buffer
+  if (serializeAddon) {
+    terminalStore.registerSnapshotCallback(props.terminalId, () => {
+      // serialize() returns VT sequences that recreate the visible buffer
+      return serializeAddon?.serialize({ scrollback: 500 }) ?? "";
+    });
+  }
+
+  // If this session has a pending buffer snapshot from a workspace restore,
+  // write it into the terminal so the user sees the previous state.
+  const session = terminalStore.sessions.get(props.terminalId);
+  if (session?.bufferSnapshot && xterm) {
+    try {
+      xterm.write(session.bufferSnapshot);
+      // Write a subtle restore banner
+      xterm.write(
+        "\r\n\x1b[38;5;240m────────────────────────────────────────\r\n" +
+        "  Snapshot restored  \u2014  Press Enter to continue\r\n" +
+        "────────────────────────────────────────\x1b[0m\r\n"
+      );
+    } catch (err) {
+      console.error("[XtermView] Failed to restore buffer snapshot:", err);
+    }
+  }
+
   // Focus on mount
   xterm.focus();
 });
 
 onUnmounted(() => {
+  terminalStore.unregisterSnapshotCallback(props.terminalId);
   if (resizeObserver) {
     resizeObserver.disconnect();
   }
@@ -223,5 +253,11 @@ watch(
 
 .xterm-view :deep(.xterm-viewport) {
   width: 100% !important;
+}
+
+/* Keep text sharp when the canvas is scaled by Vue Flow zoom */
+.xterm-view :deep(.xterm-screen canvas) {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 </style>

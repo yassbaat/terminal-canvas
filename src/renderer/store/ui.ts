@@ -21,6 +21,7 @@ export const useUIStore = defineStore("ui", () => {
   const groqSettingsOpen = ref(false);
   const settingsOpen = ref(false);
   const onboardingOpen = ref(false);
+  const workspacePickerOpen = ref(false);
 
   // ─── Toast ───────────────────────────────────────────────────────
   const toastMessage = ref<string | null>(null);
@@ -136,6 +137,20 @@ export const useUIStore = defineStore("ui", () => {
   }
 
   /**
+   * Open the workspace picker dialog.
+   */
+  function openWorkspacePicker(): void {
+    workspacePickerOpen.value = true;
+  }
+
+  /**
+   * Close the workspace picker dialog.
+   */
+  function closeWorkspacePicker(): void {
+    workspacePickerOpen.value = false;
+  }
+
+  /**
    * Show a toast message that auto-dismisses after a duration.
    */
   function showToast(message: string, duration = 3000): void {
@@ -172,6 +187,7 @@ export const useUIStore = defineStore("ui", () => {
     groqSettingsOpen,
     settingsOpen,
     onboardingOpen,
+    workspacePickerOpen,
     toastMessage,
     // Actions
     toggleInspector,
@@ -189,6 +205,8 @@ export const useUIStore = defineStore("ui", () => {
     closeSettings,
     openOnboarding,
     closeOnboarding,
+    openWorkspacePicker,
+    closeWorkspacePicker,
     showToast,
     hideToast,
   };

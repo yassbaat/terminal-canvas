@@ -34,18 +34,14 @@ function ensureWorkspacesDir(): void {
 
 /**
  * Strip non-persistable fields from terminal sessions before saving.
- * Removes bufferPreview (large output) and ensures status is normalized.
+ * Removes bufferPreview (large output) but preserves status and snapshot.
  */
 function stripTerminalsForSave(terminals: TerminalSession[]): TerminalSession[] {
   return terminals.map((t) => ({
     ...t,
     bufferPreview: "",
-    // Reset transient runtime state
+    // Keep pid null (runtime-only) but preserve status and snapshot
     pid: null,
-    status:
-      t.status === "running" || t.status === "starting"
-        ? "exited"
-        : t.status,
   }));
 }
 

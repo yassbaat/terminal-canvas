@@ -12,6 +12,7 @@ import WorkspaceCanvas from "@renderer/component/canvas/WorkspaceCanvas.vue";
 import NewTerminalDialog from "@renderer/component/dialog/NewTerminalDialog.vue";
 import SettingsDialog from "@renderer/component/dialog/SettingsDialog.vue";
 import OnboardingDialog from "@renderer/component/dialog/OnboardingDialog.vue";
+import WorkspacePickerDialog from "@renderer/component/dialog/WorkspacePickerDialog.vue";
 import CommandPalette from "@renderer/component/dialog/CommandPalette.vue";
 
 const terminalStore = useTerminalStore();
@@ -188,13 +189,37 @@ onMounted(() => {
     terminalStore.loadShells();
   }
 
-  // Create a fresh workspace
-  workspaceStore.createNewWorkspace();
-
-  // Show onboarding on first run
+  // Determine startup workspace
   const hasOnboarded = localStorage.getItem("terminal-canvas:onboarded") === "true";
+  const lastWorkspaceId = localStorage.getItem("terminal-canvas:lastWorkspaceId");
+
   if (!hasOnboarded) {
+    // First run: create fresh workspace and show onboarding
+    workspaceStore.createNewWorkspace();
     uiStore.openOnboarding();
+  } else if (lastWorkspaceId) {
+    // Returning user with a last workspace: try to auto-load it
+    workspaceStore.loadWorkspace(lastWorkspaceId).then((ws) => {
+      if (!ws) {
+        // Last workspace no longer exists, fall back to picker or new
+        workspaceStore.loadWorkspaceList().then(() => {
+          if (workspaceStore.workspaceList.length > 0) {
+            uiStore.openWorkspacePicker();
+          } else {
+            workspaceStore.createNewWorkspace();
+          }
+        });
+      }
+    });
+  } else {
+    // No last workspace: load list and show picker if any exist
+    workspaceStore.loadWorkspaceList().then(() => {
+      if (workspaceStore.workspaceList.length > 0) {
+        uiStore.openWorkspacePicker();
+      } else {
+        workspaceStore.createNewWorkspace();
+      }
+    });
   }
 
   // Tell the main process we're ready to receive queued events (e.g. openDir)
@@ -238,6 +263,7 @@ onUnmounted(() => {
     <NewTerminalDialog v-model:open="uiStore.newTerminalDialogOpen" />
     <SettingsDialog v-model:open="uiStore.settingsOpen" />
     <OnboardingDialog />
+    <WorkspacePickerDialog />
     <CommandPalette v-model:open="uiStore.commandPaletteOpen" />
 
     <!-- Toast notification -->

@@ -41,6 +41,10 @@ export interface TerminalSession {
   groupId: string | null;
   node: TerminalNodeData;
   naming: TerminalNamingState;
+  /** Serialized terminal buffer for workspace restore */
+  bufferSnapshot?: string | null;
+  /** True if this terminal was restored from a snapshot rather than started fresh */
+  restoredFromSnapshot?: boolean;
 }
 
 export interface ShellInfo {

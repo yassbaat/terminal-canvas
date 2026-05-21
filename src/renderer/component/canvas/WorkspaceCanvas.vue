@@ -22,9 +22,9 @@ const selectionKeyCode = computed<true | null>(() =>
   isPanKeyPressed.value ? null : true
 );
 
-const panOnDrag = computed<boolean | number[]>(() =>
-  isPanKeyPressed.value ? true : [1]
-);
+// Disable Vue Flow built-in pan-on-drag so selection box works.
+// We implement custom panning for middle-mouse and Shift/Space+left-drag.
+const panOnDrag = computed<boolean | number[]>(() => false);
 
 function onPanKeyDown(e: KeyboardEvent): void {
   if (e.key === "Shift" || e.key === " ") {
@@ -42,10 +42,15 @@ const {
   onNodeClick,
   onPaneClick,
   onSelectionDragStop,
+  onPaneReady,
   getSelectedNodes,
   getNode,
   addSelectedNodes,
   removeSelectedNodes,
+  vueFlowRef,
+  panBy,
+  viewport,
+  fitView,
 } = useVueFlow();
 
 // Register custom node types
@@ -88,7 +93,7 @@ const terminalNodes = computed<Node[]>(() =>
  * Convert workspace groups into Vue Flow node objects.
  */
 const groupNodes = computed<Node[]>(() =>
-  workspaceStore.groups.map((group: { id: string; x: number; y: number; width: number; height: number; collapsed: boolean; color?: string; terminalIds: string[] }) => ({
+  workspaceStore.groups.map((group: { id: string; x: number; y: number; width: number; height: number; collapsed: boolean; color?: string; terminalIds: string[]; parentId?: string | null }) => ({
     id: group.id,
     type: "group",
     position: { x: group.x, y: group.y },
@@ -97,7 +102,7 @@ const groupNodes = computed<Node[]>(() =>
     data: { group },
     selectable: true,
     draggable: true,
-    parentNode: undefined,
+    parentNode: group.parentId || undefined,
   }))
 );
 
@@ -142,43 +147,40 @@ function handleNodesChange(changes: NodeChange[]): void {
       const session = terminalStore.sessions.get(change.id);
       if (session && dimChange.dimensions) {
         terminalStore.updateNode(change.id, {
-          width: dimChange.dimensions.width,
-          height: dimChange.dimensions.height,
+          width: Math.round(dimChange.dimensions.width),
+          height: Math.round(dimChange.dimensions.height),
         });
       }
       const note = workspaceStore.stickyNotes.find((n) => n.id === change.id);
       if (note && dimChange.dimensions) {
         workspaceStore.updateStickyNote(change.id, {
-          width: dimChange.dimensions.width,
-          height: dimChange.dimensions.height,
+          width: Math.round(dimChange.dimensions.width),
+          height: Math.round(dimChange.dimensions.height),
         });
       }
     } else if (change.type === "select") {
       const selectChange = change as NodeSelectionChange;
       if (terminalStore.sessions.has(selectChange.id)) {
-        const newSet = new Set(terminalStore.selectedTerminalIds);
-        if (selectChange.selected) {
-          newSet.add(selectChange.id);
-        } else {
-          newSet.delete(selectChange.id);
+        if (selectChange.selected !== terminalStore.selectedTerminalIds.has(selectChange.id)) {
+          const newSet = new Set(terminalStore.selectedTerminalIds);
+          if (selectChange.selected) newSet.add(selectChange.id);
+          else newSet.delete(selectChange.id);
+          terminalStore.selectedTerminalIds = newSet;
         }
-        terminalStore.selectedTerminalIds = newSet;
       } else if (workspaceStore.stickyNotes.find((n) => n.id === selectChange.id)) {
-        const newSet = new Set(workspaceStore.selectedNoteIds);
-        if (selectChange.selected) {
-          newSet.add(selectChange.id);
-        } else {
-          newSet.delete(selectChange.id);
+        if (selectChange.selected !== workspaceStore.selectedNoteIds.has(selectChange.id)) {
+          const newSet = new Set(workspaceStore.selectedNoteIds);
+          if (selectChange.selected) newSet.add(selectChange.id);
+          else newSet.delete(selectChange.id);
+          workspaceStore.selectedNoteIds = newSet;
         }
-        workspaceStore.selectedNoteIds = newSet;
       } else if (workspaceStore.groups.find((g) => g.id === selectChange.id)) {
-        const newSet = new Set(workspaceStore.selectedGroupIds);
-        if (selectChange.selected) {
-          newSet.add(selectChange.id);
-        } else {
-          newSet.delete(selectChange.id);
+        if (selectChange.selected !== workspaceStore.selectedGroupIds.has(selectChange.id)) {
+          const newSet = new Set(workspaceStore.selectedGroupIds);
+          if (selectChange.selected) newSet.add(selectChange.id);
+          else newSet.delete(selectChange.id);
+          workspaceStore.selectedGroupIds = newSet;
         }
-        workspaceStore.selectedGroupIds = newSet;
       }
     }
   }
@@ -220,6 +222,55 @@ watch(
     if (toSelect.length > 0) addSelectedNodes(toSelect);
   }
 );
+
+// --- Fit View from Sidebar ----------------------------------------
+
+/**
+ * When the sidebar requests a fit-view to a specific node, zoom the
+ * canvas so that node is centered and clearly visible.
+ */
+watch(
+  () => workspaceStore.fitViewTargetId,
+  (id) => {
+    if (!id) return;
+    const node = getNode.value(id);
+    if (node) {
+      fitView({ nodes: [node.id], padding: 0.25, duration: 400 });
+    }
+    workspaceStore.fitViewTargetId = null;
+  }
+);
+
+// --- Custom Panning (middle-mouse / Shift+left-drag) --------------
+
+const isCustomPanning = ref(false);
+const panLastPos = ref({ x: 0, y: 0 });
+
+function handleContainerMouseDown(e: MouseEvent): void {
+  const isMiddleMouse = e.button === 1;
+  const isPanKey = isPanKeyPressed.value || e.shiftKey;
+  const isLeftMouse = e.button === 0;
+
+  if (isMiddleMouse || (isLeftMouse && isPanKey)) {
+    isCustomPanning.value = true;
+    panLastPos.value = { x: e.clientX, y: e.clientY };
+    e.preventDefault();
+    e.stopPropagation();
+  }
+}
+
+function handleContainerMouseMove(e: MouseEvent): void {
+  if (!isCustomPanning.value) return;
+  const dx = e.clientX - panLastPos.value.x;
+  const dy = e.clientY - panLastPos.value.y;
+  const zoom = viewport.value.zoom;
+  panBy({ x: -dx / zoom, y: -dy / zoom });
+  panLastPos.value = { x: e.clientX, y: e.clientY };
+}
+
+function handleContainerMouseUp(): void {
+  isCustomPanning.value = false;
+}
 
 /**
  * Handle node drag stop -- sync final position back to the store.
@@ -383,12 +434,23 @@ onMounted(() => {
   window.addEventListener("keydown", handleKeyDown);
   window.addEventListener("keydown", onPanKeyDown);
   window.addEventListener("keyup", onPanKeyUp);
+  window.addEventListener("mousemove", handleContainerMouseMove);
+  window.addEventListener("mouseup", handleContainerMouseUp);
 });
 
 onUnmounted(() => {
   window.removeEventListener("keydown", handleKeyDown);
   window.removeEventListener("keydown", onPanKeyDown);
   window.removeEventListener("keyup", onPanKeyUp);
+  window.removeEventListener("mousemove", handleContainerMouseMove);
+  window.removeEventListener("mouseup", handleContainerMouseUp);
+});
+
+onPaneReady(() => {
+  const el = vueFlowRef.value;
+  if (el) {
+    el.addEventListener("mousedown", handleContainerMouseDown);
+  }
 });
 </script>
 
@@ -472,5 +534,13 @@ onUnmounted(() => {
 
 .canvas-status-running {
   color: var(--tc-status-running);
+}
+
+/* Override Vue Flow's grab cursor — default should be normal pointer */
+.workspace-canvas :deep(.vue-flow__pane) {
+  cursor: default !important;
+}
+.workspace-canvas :deep(.vue-flow__node) {
+  cursor: default;
 }
 </style>

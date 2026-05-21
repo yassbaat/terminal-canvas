@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useUIStore } from "@renderer/store/ui";
@@ -10,6 +10,10 @@ const workspaceStore = useWorkspaceStore();
 const uiStore = useUIStore();
 
 const sessions = computed(() => terminalStore.allSessions);
+
+onMounted(() => {
+  workspaceStore.loadWorkspaceList();
+});
 
 const activeTab = computed({
   get: () => uiStore.sidebarTab,
@@ -86,6 +90,13 @@ function handleLayerClick(
     }
   }
 }
+
+/**
+ * Double-click a layer item to zoom the canvas to that node.
+ */
+function handleLayerDblClick(id: string): void {
+  workspaceStore.fitViewTargetId = id;
+}
 </script>
 
 <template>
@@ -124,6 +135,7 @@ function handleLayerClick(
           class="layer-item group-layer"
           :class="{ selected: isGroupSelected(group.id) }"
           @click="handleLayerClick('group', group.id, $event)"
+          @dblclick="handleLayerDblClick(group.id)"
         >
           <div class="layer-row">
             <span class="layer-icon">&#128193;</span>
@@ -137,6 +149,7 @@ function handleLayerClick(
             class="layer-item terminal-layer nested"
             :class="{ selected: isTerminalSelected(tid) }"
             @click.stop="handleLayerClick('terminal', tid, $event)"
+            @dblclick.stop="handleLayerDblClick(tid)"
           >
             <div class="layer-row">
               <span class="layer-status-dot" :class="terminalStore.sessions.get(tid)?.status" />
@@ -155,6 +168,7 @@ function handleLayerClick(
             exited: session.status === 'exited' || session.status === 'crashed'
           }"
           @click="handleLayerClick('terminal', session.id, $event)"
+          @dblclick="handleLayerDblClick(session.id)"
         >
           <div class="layer-row">
             <span class="layer-status-dot" :class="`status-${session.status}`" />
@@ -176,6 +190,7 @@ function handleLayerClick(
           class="layer-item note-layer"
           :class="{ selected: isNoteSelected(note.id) }"
           @click="handleLayerClick('note', note.id, $event)"
+          @dblclick="handleLayerDblClick(note.id)"
         >
           <div class="layer-row">
             <span class="layer-icon">&#128221;</span>
@@ -188,15 +203,31 @@ function handleLayerClick(
       <div v-else class="tab-panel">
         <div v-if="workspaceStore.workspaceList.length === 0" class="empty-state">
           No saved workspaces.
+          <br />
+          <span class="empty-hint">Press Ctrl+S to save the current workspace.</span>
         </div>
         <div
           v-for="ws in workspaceStore.workspaceList"
           :key="ws.id"
           class="workspace-item"
+          :class="{ active: workspaceStore.currentWorkspace?.id === ws.id }"
           @click="workspaceStore.loadWorkspace(ws.id)"
         >
-          <span class="workspace-name">{{ ws.name }}</span>
-          <span class="workspace-date">{{ new Date(ws.updatedAt).toLocaleDateString() }}</span>
+          <div class="workspace-info">
+            <span class="workspace-name">{{ ws.name }}</span>
+            <span class="workspace-meta">
+              {{ ws.terminalCount }} terminal{{ ws.terminalCount === 1 ? '' : 's' }}
+              &middot;
+              {{ new Date(ws.updatedAt).toLocaleDateString() }}
+            </span>
+          </div>
+          <button
+            class="workspace-delete"
+            @click.stop="workspaceStore.deleteWorkspace(ws.id)"
+            title="Delete workspace"
+          >
+            &times;
+          </button>
         </div>
       </div>
     </div>
@@ -301,6 +332,7 @@ function handleLayerClick(
 .layer-item.selected {
   background: var(--tc-accent-soft);
   border-color: var(--tc-accent);
+  box-shadow: inset 3px 0 0 0 var(--tc-accent);
 }
 
 .layer-row {
@@ -428,7 +460,7 @@ function handleLayerClick(
   opacity: 0.9;
 }
 
-/* Workspace list (unchanged) */
+/* Workspace list */
 .workspace-item {
   padding: 8px 10px;
   border-radius: var(--tc-border-radius-sm);
@@ -437,19 +469,64 @@ function handleLayerClick(
   display: flex;
   justify-content: space-between;
   align-items: center;
+  border: 1px solid transparent;
 }
 
 .workspace-item:hover {
   background: var(--tc-bg-hover);
+  border-color: var(--tc-border-color);
+}
+
+.workspace-item.active {
+  background: var(--tc-accent-soft);
+  border-color: var(--tc-accent);
+  box-shadow: inset 3px 0 0 0 var(--tc-accent);
+}
+
+.workspace-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .workspace-name {
   font-size: var(--tc-font-size-sm);
   color: var(--tc-text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.workspace-date {
+.workspace-meta {
   font-size: var(--tc-font-size-xs);
   color: var(--tc-text-muted);
+}
+
+.workspace-delete {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--tc-text-muted);
+  cursor: pointer;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity var(--tc-transition-fast);
+  flex-shrink: 0;
+}
+
+.workspace-item:hover .workspace-delete {
+  opacity: 1;
+}
+
+.workspace-delete:hover {
+  background: rgba(233, 69, 96, 0.15);
+  color: var(--tc-error);
 }
 </style>

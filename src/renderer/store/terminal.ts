@@ -18,6 +18,7 @@ export const useTerminalStore = defineStore("terminal", () => {
   const shells = ref<ShellInfo[]>([]);
   const focusedTerminalId = ref<string | null>(null);
   const selectedTerminalIds = ref<Set<string>>(new Set());
+  const snapshotCallbacks = ref<Map<string, () => string>>(new Map());
   const sessionDefaultShellId = ref<string | null>(null);
 
   // ─── Getters ─────────────────────────────────────────────────────
@@ -277,6 +278,38 @@ export const useTerminalStore = defineStore("terminal", () => {
   // ─── IPC Listeners ───────────────────────────────────────────────
 
   /**
+   * Register a callback to capture a terminal's buffer snapshot.
+   * Called by XtermView on mount.
+   */
+  function registerSnapshotCallback(id: string, callback: () => string): void {
+    snapshotCallbacks.value.set(id, callback);
+  }
+
+  /**
+   * Unregister a snapshot callback.
+   * Called by XtermView on unmount.
+   */
+  function unregisterSnapshotCallback(id: string): void {
+    snapshotCallbacks.value.delete(id);
+  }
+
+  /**
+   * Capture snapshots from all registered terminals.
+   * Returns a map of terminalId → serialized buffer.
+   */
+  function captureAllSnapshots(): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (const [id, callback] of snapshotCallbacks.value.entries()) {
+      try {
+        result[id] = callback();
+      } catch (err) {
+        console.error(`[TerminalStore] Failed to capture snapshot for ${id}`, err);
+      }
+    }
+    return result;
+  }
+
+  /**
    * Set up all IPC event listeners from the main process.
    * Call this once during app initialization.
    */
@@ -367,5 +400,8 @@ export const useTerminalStore = defineStore("terminal", () => {
     clearTerminal,
     openCwdInExplorer,
     setupListeners,
+    registerSnapshotCallback,
+    unregisterSnapshotCallback,
+    captureAllSnapshots,
   };
 });
