@@ -19,9 +19,38 @@ async function quickNewTerminal() {
       cols: 80,
       rows: 24,
     });
+    terminalStore.setLastTerminalConfig({ shellId: shell.id, cwd: "", command: null });
   } else {
     uiStore.openNewTerminalDialog();
   }
+}
+
+async function duplicateLastTerminal() {
+  const config = terminalStore.lastTerminalConfig;
+  if (!config) {
+    uiStore.showToast("No terminal to duplicate");
+    return;
+  }
+  const shell = terminalStore.shells.find((s) => s.id === config.shellId);
+  if (!shell) {
+    uiStore.showToast("Shell not available for duplication");
+    return;
+  }
+
+  const session = await terminalStore.createSession({
+    shellId: config.shellId,
+    cols: 80,
+    rows: 24,
+    cwd: config.cwd || undefined,
+  });
+
+  if (config.command) {
+    setTimeout(() => {
+      terminalStore.writeToTerminal(session.id, config.command + "\r");
+    }, 600);
+  }
+
+  uiStore.showToast("Terminal duplicated");
 }
 
 async function openFolder() {
@@ -50,6 +79,8 @@ async function openFolder() {
     viewport: workspaceStore.viewport,
     groups: workspaceStore.groups,
   });
+  terminalStore.setLastUsedCwd(dir);
+  terminalStore.setLastTerminalConfig({ shellId: shell.id, cwd: dir, command: null });
   uiStore.showToast(`Opened folder: ${dir}`);
 }
 
@@ -102,6 +133,11 @@ function toggleInspector() {
       <button class="toolbar-btn" title="New Terminal (Ctrl+N)" @click="quickNewTerminal">
         <span class="toolbar-icon">+</span>
         <span>New</span>
+      </button>
+
+      <button class="toolbar-btn" title="Duplicate Last Terminal" @click="duplicateLastTerminal">
+        <span class="toolbar-icon">&#8634;</span>
+        <span>Duplicate</span>
       </button>
 
       <button class="toolbar-btn" title="Open Folder" @click="openFolder">

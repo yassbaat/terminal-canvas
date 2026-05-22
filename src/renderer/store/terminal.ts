@@ -8,6 +8,67 @@ import type {
 import type { Group } from "@renderer/type/workspace";
 import { findNonOverlappingPosition } from "@renderer/util/placement";
 
+export interface CommandPreset {
+  id: string;
+  name: string;
+  command: string;
+}
+
+export interface LastTerminalConfig {
+  shellId: string;
+  cwd: string;
+  command: string | null;
+}
+
+const DEFAULT_PRESETS: CommandPreset[] = [
+  { id: "default-kimi-yolo", name: "kimi --yolo", command: "kimi --yolo" },
+  { id: "default-gemini-yolo", name: "gemini --yolo", command: "gemini --yolo" },
+  { id: "default-claude", name: "claude", command: "claude" },
+  { id: "default-codex", name: "codex", command: "codex" },
+];
+
+function loadPresets(): CommandPreset[] {
+  try {
+    const raw = localStorage.getItem("tc:commandPresets");
+    const saved: CommandPreset[] = raw ? JSON.parse(raw) : [];
+    // Merge defaults with saved user presets (defaults always present)
+    const savedIds = new Set(saved.map((p) => p.id));
+    const defaultsToAdd = DEFAULT_PRESETS.filter((p) => !savedIds.has(p.id));
+    return [...defaultsToAdd, ...saved];
+  } catch {
+    return [...DEFAULT_PRESETS];
+  }
+}
+
+function savePresets(presets: CommandPreset[]) {
+  localStorage.setItem("tc:commandPresets", JSON.stringify(presets));
+}
+
+function loadLastCwd(): string {
+  try {
+    return localStorage.getItem("tc:lastCwd") || "";
+  } catch {
+    return "";
+  }
+}
+
+function saveLastCwd(cwd: string) {
+  localStorage.setItem("tc:lastCwd", cwd);
+}
+
+function loadLastConfig(): LastTerminalConfig | null {
+  try {
+    const raw = localStorage.getItem("tc:lastTerminalConfig");
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveLastConfig(config: LastTerminalConfig) {
+  localStorage.setItem("tc:lastTerminalConfig", JSON.stringify(config));
+}
+
 /**
  * Pinia store for managing terminal sessions.
  * Handles session lifecycle, selection, focus, and IPC event listeners.
@@ -20,6 +81,9 @@ export const useTerminalStore = defineStore("terminal", () => {
   const selectedTerminalIds = ref<Set<string>>(new Set());
   const snapshotCallbacks = ref<Map<string, () => string>>(new Map());
   const sessionDefaultShellId = ref<string | null>(null);
+  const lastUsedCwd = ref<string>(loadLastCwd());
+  const commandPresets = ref<CommandPreset[]>(loadPresets());
+  const lastTerminalConfig = ref<LastTerminalConfig | null>(loadLastConfig());
 
   // ─── Getters ─────────────────────────────────────────────────────
   const allSessions = computed(() => Array.from(sessions.value.values()));
@@ -262,6 +326,39 @@ export const useTerminalStore = defineStore("terminal", () => {
   }
 
   /**
+   * Persist the last used working directory.
+   */
+  function setLastUsedCwd(cwd: string): void {
+    lastUsedCwd.value = cwd;
+    saveLastCwd(cwd);
+  }
+
+  /**
+   * Save a command preset.
+   */
+  function addCommandPreset(preset: Omit<CommandPreset, "id">): void {
+    const id = `preset_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    commandPresets.value.push({ id, ...preset });
+    savePresets(commandPresets.value);
+  }
+
+  /**
+   * Remove a command preset.
+   */
+  function removeCommandPreset(id: string): void {
+    commandPresets.value = commandPresets.value.filter((p) => p.id !== id);
+    savePresets(commandPresets.value);
+  }
+
+  /**
+   * Save the config of the last created terminal for duplication.
+   */
+  function setLastTerminalConfig(config: LastTerminalConfig): void {
+    lastTerminalConfig.value = config;
+    saveLastConfig(config);
+  }
+
+  /**
    * Clear a terminal's screen.
    */
   async function clearTerminal(id: string): Promise<void> {
@@ -393,6 +490,13 @@ export const useTerminalStore = defineStore("terminal", () => {
     clearSelection,
     loadShells,
     sessionDefaultShellId,
+    lastUsedCwd,
+    commandPresets,
+    lastTerminalConfig,
+    setLastUsedCwd,
+    addCommandPreset,
+    removeCommandPreset,
+    setLastTerminalConfig,
     updateSessionName,
     setAutoName,
     resizeTerminal,

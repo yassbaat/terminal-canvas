@@ -38,9 +38,38 @@ const commands = computed<Command[]>(() => {
         const shell = terminalStore.shells.find((s) => s.id === shellId);
         if (shell) {
           await terminalStore.createSession({ shellId: shell.id, cols: 80, rows: 24 });
+          terminalStore.setLastTerminalConfig({ shellId: shell.id, cwd: "", command: null });
         } else {
           uiStore.newTerminalDialogOpen = true;
         }
+      },
+    },
+    {
+      id: "duplicate-terminal",
+      label: "Duplicate Last Terminal",
+      action: async () => {
+        const config = terminalStore.lastTerminalConfig;
+        if (!config) {
+          uiStore.showToast("No terminal to duplicate");
+          return;
+        }
+        const shell = terminalStore.shells.find((s) => s.id === config.shellId);
+        if (!shell) {
+          uiStore.showToast("Shell not available for duplication");
+          return;
+        }
+        const session = await terminalStore.createSession({
+          shellId: config.shellId,
+          cols: 80,
+          rows: 24,
+          cwd: config.cwd || undefined,
+        });
+        if (config.command) {
+          setTimeout(() => {
+            terminalStore.writeToTerminal(session.id, config.command + "\r");
+          }, 600);
+        }
+        uiStore.showToast("Terminal duplicated");
       },
     },
     { id: "save-workspace", label: "Save Workspace", shortcut: "Ctrl+S", action: async () => { await workspaceStore.saveCurrentWorkspace(); uiStore.showToast("Saved"); } },

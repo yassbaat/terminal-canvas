@@ -247,11 +247,16 @@ const isCustomPanning = ref(false);
 const panLastPos = ref({ x: 0, y: 0 });
 
 function handleContainerMouseDown(e: MouseEvent): void {
+  const target = e.target as HTMLElement;
+  const isOnNode = !!target.closest(".vue-flow__node");
   const isMiddleMouse = e.button === 1;
   const isPanKey = isPanKeyPressed.value || e.shiftKey;
   const isLeftMouse = e.button === 0;
 
-  if (isMiddleMouse || (isLeftMouse && isPanKey)) {
+  // Middle mouse always pans (Vue Flow ignores middle clicks).
+  // Space/Shift + left mouse pans only on empty canvas to avoid
+  // conflicting with node drag/selection.
+  if (isMiddleMouse || (isLeftMouse && isPanKey && !isOnNode)) {
     isCustomPanning.value = true;
     panLastPos.value = { x: e.clientX, y: e.clientY };
     e.preventDefault();

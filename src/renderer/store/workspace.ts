@@ -90,17 +90,69 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     try {
       currentWorkspace.value.updatedAt = Date.now();
 
-      // Sync terminal sessions from terminalStore
+      // Capture terminal buffer snapshots before syncing
       const terminalStore = useTerminalStore();
-      currentWorkspace.value.terminals = terminalStore.allSessions.map((s) => ({ ...s }));
+      const snapshots = terminalStore.captureAllSnapshots();
+
+      // Sync terminal sessions from terminalStore (attach snapshots)
+      currentWorkspace.value.terminals = terminalStore.allSessions.map((s) => ({
+        ...s,
+        bufferSnapshot: snapshots[s.id] || s.bufferSnapshot || null,
+      }));
 
       // Sync prompt history from promptStore
       const promptStore = usePromptStore();
       currentWorkspace.value.promptHistory = promptStore.getAllPrompts();
 
-      // Sync edges & sticky notes from workspace state (already in currentWorkspace)
+      // Deep-deref to strip Vue proxies before IPC (Structured Clone can't serialize Proxies).
+      // We manually reconstruct a plain object instead of relying on toRaw/JSON because
+      // Vue's deep reactivity can leave nested proxies inside the raw target.
+      const cw = currentWorkspace.value;
+      const plain: Workspace = {
+        id: cw.id,
+        name: cw.name,
+        createdAt: cw.createdAt,
+        updatedAt: cw.updatedAt,
+        viewport: { ...cw.viewport },
+        terminals: cw.terminals.map((t) => ({
+          id: t.id,
+          name: t.name,
+          autoName: t.autoName,
+          manualName: t.manualName,
+          shellId: t.shellId,
+          shellName: t.shellName,
+          shellPath: t.shellPath,
+          shellArgs: [...t.shellArgs],
+          cwd: t.cwd,
+          cwdLabel: t.cwdLabel,
+          projectName: t.projectName,
+          repoRoot: t.repoRoot,
+          status: t.status,
+          pid: t.pid,
+          createdAt: t.createdAt,
+          updatedAt: t.updatedAt,
+          exitedAt: t.exitedAt,
+          exitCode: t.exitCode,
+          lastActivityAt: t.lastActivityAt,
+          lastPromptAt: t.lastPromptAt,
+          cols: t.cols,
+          rows: t.rows,
+          bufferPreview: t.bufferPreview,
+          promptCount: t.promptCount,
+          groupId: t.groupId,
+          node: { ...t.node },
+          naming: { ...t.naming },
+          bufferSnapshot: t.bufferSnapshot ?? null,
+          restoredFromSnapshot: t.restoredFromSnapshot ?? false,
+        })),
+        groups: cw.groups.map((g) => ({ ...g, terminalIds: [...g.terminalIds] })),
+        edges: cw.edges.map((e) => ({ ...e })),
+        stickyNotes: cw.stickyNotes.map((n) => ({ ...n })),
+        promptHistory: cw.promptHistory.map((p) => ({ ...p, tags: [...p.tags] })),
+        settings: { ...cw.settings },
+      };
 
-      await window.api.workspace.save({ workspace: currentWorkspace.value as Workspace });
+      await window.api.workspace.save({ workspace: plain });
       lastSavedAt.value = Date.now();
       // Remember this as the last opened workspace
       localStorage.setItem("terminal-canvas:lastWorkspaceId", currentWorkspace.value!.id);
@@ -358,9 +410,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       if (s) s.groupId = group.id;
     }
 
-    // Nest selected groups inside the new group
+    // Nest selected groups inside the new group.
+    // Convert their absolute positions to relative positions.
     for (const g of childGroups) {
-      if (g) g.parentId = group.id;
+      if (g) {
+        g.parentId = group.id;
+        g.x = g.x - group.x;
+        g.y = g.y - group.y;
+      }
     }
 
     terminalStore.clearSelection();

@@ -53,6 +53,7 @@ function handleKeyDown(e: KeyboardEvent): void {
     const shell = terminalStore.shells.find((s) => s.id === shellId);
     if (shell) {
       terminalStore.createSession({ shellId: shell.id, cols: 80, rows: 24 });
+      terminalStore.setLastTerminalConfig({ shellId: shell.id, cwd: "", command: null });
     } else {
       uiStore.openNewTerminalDialog();
     }
@@ -75,13 +76,16 @@ function handleKeyDown(e: KeyboardEvent): void {
     return;
   }
 
-  // Ctrl+G: Group selected terminals
+  // Ctrl+G: Group selected items (terminals, notes, groups)
   if (e.key === "g" && e.ctrlKey && !e.shiftKey) {
-    workspaceStore.groupSelectedTerminals().then((group: { terminalIds: string[] } | null) => {
+    workspaceStore.groupSelectedTerminals().then((group) => {
       if (group) {
-        uiStore.showToast(`Grouped ${group.terminalIds.length} terminal(s)`);
+        const tCount = group.terminalIds.length;
+        const nCount = group.noteIds?.length || 0;
+        const total = tCount + nCount;
+        uiStore.showToast(`Grouped ${total} item(s)`);
       } else {
-        uiStore.showToast("No terminals selected");
+        uiStore.showToast("No items selected");
       }
     });
     e.preventDefault();
@@ -132,6 +136,8 @@ if (typeof window.api !== "undefined") {
         viewport: workspaceStore.viewport,
         groups: workspaceStore.groups,
       });
+      terminalStore.setLastUsedCwd(dir);
+      terminalStore.setLastTerminalConfig({ shellId, cwd: dir, command: null });
       uiStore.showToast(`Opened folder in terminal: ${dir}`);
     } catch (err) {
       uiStore.showToast(`Failed to open terminal: ${dir}`);
