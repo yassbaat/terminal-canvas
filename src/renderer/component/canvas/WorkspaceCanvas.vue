@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, markRaw, watch } from "vue";
-import { VueFlow, useVueFlow, Panel, SelectionMode } from "@vue-flow/core";
+import { VueFlow, Panel, SelectionMode } from "@vue-flow/core";
+import type { VueFlowStore } from "@vue-flow/core";
 import { Background, BackgroundVariant } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 import { MiniMap } from "@vue-flow/minimap";
@@ -38,20 +39,7 @@ function onPanKeyUp(e: KeyboardEvent): void {
   }
 }
 
-const {
-  onNodeClick,
-  onPaneClick,
-  onSelectionDragStop,
-  onPaneReady,
-  getSelectedNodes,
-  getNode,
-  addSelectedNodes,
-  removeSelectedNodes,
-  vueFlowRef,
-  panBy,
-  viewport,
-  fitView,
-} = useVueFlow();
+const realVueFlowStore = ref<VueFlowStore | null>(null);
 
 // Register custom node types
 const nodeTypes: Record<string, any> = {
@@ -192,12 +180,15 @@ function handleNodesChange(changes: NodeChange[]): void {
  */
 watch(
   () => ({
+    hasStore: realVueFlowStore.value !== null,
     terminals: Array.from(terminalStore.selectedTerminalIds).sort().join(","),
     notes: Array.from(workspaceStore.selectedNoteIds).sort().join(","),
     groups: Array.from(workspaceStore.selectedGroupIds).sort().join(","),
   }),
-  () => {
-    const vfSelected = new Set(getSelectedNodes.value.map((n) => n.id));
+  ({ hasStore }) => {
+    if (!hasStore) return;
+    const store = realVueFlowStore.value!;
+    const vfSelected = new Set(store.getSelectedNodes.map((n: GraphNode) => n.id));
     const storeSelected = new Set([
       ...terminalStore.selectedTerminalIds,
       ...workspaceStore.selectedNoteIds,
@@ -212,14 +203,14 @@ watch(
       return;
     }
 
-    const currentlySelected = getSelectedNodes.value;
+    const currentlySelected = store.getSelectedNodes;
     const toSelect = [...storeSelected]
-      .map((id) => getNode.value(id))
+      .map((id) => store.getNode(id))
       .filter(Boolean) as GraphNode[];
-    const toUnselect = currentlySelected.filter((n) => !storeSelected.has(n.id));
+    const toUnselect = currentlySelected.filter((n: GraphNode) => !storeSelected.has(n.id));
 
-    if (toUnselect.length > 0) removeSelectedNodes(toUnselect);
-    if (toSelect.length > 0) addSelectedNodes(toSelect);
+    if (toUnselect.length > 0) store.removeSelectedNodes(toUnselect);
+    if (toSelect.length > 0) store.addSelectedNodes(toSelect);
   }
 );
 
@@ -230,12 +221,16 @@ watch(
  * canvas so that node is centered and clearly visible.
  */
 watch(
-  () => workspaceStore.fitViewTargetId,
-  (id) => {
-    if (!id) return;
-    const node = getNode.value(id);
+  () => ({
+    hasStore: realVueFlowStore.value !== null,
+    targetId: workspaceStore.fitViewTargetId,
+  }),
+  ({ hasStore, targetId }) => {
+    if (!hasStore || !targetId) return;
+    const store = realVueFlowStore.value!;
+    const node = store.getNode(targetId);
     if (node) {
-      fitView({ nodes: [node.id], padding: 0.25, duration: 400 });
+      store.fitView({ nodes: [targetId], padding: 0.25, duration: 400 });
     }
     workspaceStore.fitViewTargetId = null;
   }
@@ -265,11 +260,11 @@ function handleContainerMouseDown(e: MouseEvent): void {
 }
 
 function handleContainerMouseMove(e: MouseEvent): void {
-  if (!isCustomPanning.value) return;
+  if (!isCustomPanning.value || !realVueFlowStore.value) return;
   const dx = e.clientX - panLastPos.value.x;
   const dy = e.clientY - panLastPos.value.y;
-  const zoom = viewport.value.zoom;
-  panBy({ x: -dx / zoom, y: -dy / zoom });
+  const zoom = realVueFlowStore.value.viewport.zoom;
+  realVueFlowStore.value.panBy({ x: dx / zoom, y: dy / zoom });
   panLastPos.value = { x: e.clientX, y: e.clientY };
 }
 
@@ -334,27 +329,17 @@ function handleViewportChange(viewport: { x: number; y: number; zoom: number }):
 
 // --- Node Click / Selection ---------------------------------------
 
-/**
- * When a terminal node is clicked, focus it for keyboard input.
- */
-onNodeClick(({ node }) => {
+function handleNodeClickEvent({ node }: { node: GraphNode }): void {
   if (node.type === "terminal") {
     terminalStore.setFocused(node.id);
   }
-});
+}
 
-/**
- * When the canvas (pane) is clicked, unfocus any focused terminal.
- */
-onPaneClick(() => {
+function handlePaneClickEvent(): void {
   terminalStore.setFocused(null);
-});
+}
 
-/**
- * When a selection of nodes is dragged, sync all terminal positions back to store.
- * Also moves pinned sticky notes with their terminals.
- */
-onSelectionDragStop(({ nodes }) => {
+function handleSelectionDragStopEvent({ nodes }: { nodes: GraphNode[] }): void {
   const movedTerminals: Array<{ id: string; dx: number; dy: number }> = [];
   for (const node of nodes) {
     if (node.type === "terminal") {
@@ -389,7 +374,7 @@ onSelectionDragStop(({ nodes }) => {
       }
     }
   }
-});
+}
 
 // --- Keyboard Shortcuts -------------------------------------------
 
@@ -449,14 +434,22 @@ onUnmounted(() => {
   window.removeEventListener("keyup", onPanKeyUp);
   window.removeEventListener("mousemove", handleContainerMouseMove);
   window.removeEventListener("mouseup", handleContainerMouseUp);
+  const store = realVueFlowStore.value;
+  if (store) {
+    const el = store.vueFlowRef;
+    if (el) {
+      el.removeEventListener("mousedown", handleContainerMouseDown);
+    }
+  }
 });
 
-onPaneReady(() => {
-  const el = vueFlowRef.value;
+function handlePaneReady(vueFlowStore: VueFlowStore): void {
+  realVueFlowStore.value = vueFlowStore;
+  const el = vueFlowStore.vueFlowRef.value;
   if (el) {
     el.addEventListener("mousedown", handleContainerMouseDown);
   }
-});
+}
 </script>
 
 <template>
@@ -478,8 +471,12 @@ onPaneReady(() => {
     :fit-view-on-init="true"
     @nodes-change="handleNodesChange"
     @node-drag-stop="handleNodeDragStop"
+    @selection-drag-stop="handleSelectionDragStopEvent"
     @connect="handleConnect"
     @viewport-change="handleViewportChange"
+    @node-click="handleNodeClickEvent"
+    @pane-click="handlePaneClickEvent"
+    @pane-ready="handlePaneReady"
   >
     <!-- Dotted background grid -->
     <Background

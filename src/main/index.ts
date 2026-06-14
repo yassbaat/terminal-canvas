@@ -19,13 +19,15 @@ function parseOpenDir(argv: string[]): string | null {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg.startsWith("--open-dir=")) {
-      const dir = arg.slice("--open-dir=".length).replace(/^"+|"+$/g, "");
+      let dir = arg.slice("--open-dir=".length).replace(/^"+|"+$/g, "");
+      dir = path.normalize(dir);
       if (isValidDirectory(dir)) return dir;
     }
     if (arg === "--open-dir") {
       const next = argv[i + 1];
       if (next) {
-        const dir = next.replace(/^"+|"+$/g, "");
+        let dir = next.replace(/^"+|"+$/g, "");
+        dir = path.normalize(dir);
         if (isValidDirectory(dir)) return dir;
       }
     }
@@ -33,7 +35,8 @@ function parseOpenDir(argv: string[]): string | null {
   // Fallback: look for a path-like argument that isn't a flag
   for (const arg of argv) {
     if (!arg.startsWith("-") && (arg.includes(":\\") || arg.includes("/"))) {
-      const dir = arg.replace(/^"+|"+$/g, "");
+      let dir = arg.replace(/^"+|"+$/g, "");
+      dir = path.normalize(dir);
       if (isValidDirectory(dir)) return dir;
     }
   }
@@ -45,7 +48,7 @@ function parseOpenDir(argv: string[]): string | null {
  */
 function isValidDirectory(dir: string): boolean {
   try {
-    return statSync(dir).isDirectory();
+    return statSync(path.normalize(dir)).isDirectory();
   } catch {
     return false;
   }

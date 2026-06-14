@@ -1,5 +1,6 @@
 import { spawnSync } from "child_process";
 import { app } from "electron";
+import path from "path";
 import { createLogger } from "../util/logger";
 
 const logger = createLogger("ContextMenu");
@@ -22,7 +23,7 @@ function getExecPath(): string {
   // process.execPath is the actual executable:
   // - In production (packaged): the installed app .exe
   // - In dev: the electron binary from node_modules (should not be used)
-  return process.execPath;
+  return path.resolve(process.execPath);
 }
 
 function ensurePackaged(): void {
@@ -57,9 +58,10 @@ export function registerContextMenu(): void {
   const execPath = getExecPath();
   // Quote the executable path so spaces are handled
   const quotedExec = `"${execPath}"`;
-  // Use `--open-dir="%V"` (single arg) to avoid Windows trailing-backslash
-  // quote-escape issues (e.g. C:\ -> \" escapes the closing quote).
-  const commandValue = `${quotedExec} "--open-dir=%V"`;
+  // Use --open-dir as a separate arg and append \. to %V so there is never
+  // a bare trailing backslash before the closing quote (\" would escape it).
+  // The \. resolves to the directory itself via path.normalize().
+  const commandValue = `${quotedExec} --open-dir "%V\\."`;
 
   // Directory (right-click on a folder icon)
   runReg(["add", REG_PATHS.directory, "/f", "/ve", "/d", MENU_LABEL]);

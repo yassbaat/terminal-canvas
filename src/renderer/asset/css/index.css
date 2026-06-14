@@ -65,6 +65,7 @@ body {
 
 .vue-flow__background {
   background-color: var(--tc-bg-primary);
+  pointer-events: none !important;
 }
 
 .vue-flow__controls {
@@ -103,6 +104,12 @@ body {
   background: var(--tc-bg-card);
   border: 1px solid var(--tc-border-color);
   border-radius: var(--tc-border-radius-sm);
+}
+
+/* ===== Selection Box (drag-to-select) ===== */
+.vue-flow__selection {
+  background: rgba(233, 69, 96, 0.08) !important;
+  border: 1px dotted rgba(233, 69, 96, 0.8) !important;
 }
 
 /* ===== xterm.js Overrides ===== */
