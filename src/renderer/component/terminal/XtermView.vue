@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from "vue";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { useTerminalStore } from "@renderer/store/terminal";
+import { useUIStore } from "@renderer/store/ui";
 
 const props = defineProps<{
   terminalId: string;
@@ -17,6 +18,44 @@ const emit = defineEmits<{
 
 const terminalContainer = ref<HTMLDivElement | null>(null);
 const terminalStore = useTerminalStore();
+const uiStore = useUIStore();
+
+// The terminal itself stays dark in both app themes (ANSI palettes are
+// tuned for a dark ground, and every terminal app keeps this convention) --
+// only the exact shade shifts a little so it still feels integrated with a
+// light UI, matching --tc-terminal-bg in variables.css.
+const DARK_XTERM_THEME: ITheme = {
+  background: "#0d0d1a",
+  foreground: "#e0e0e0",
+  cursor: "#e94560",
+  selectionBackground: "#4a4a6a",
+  black: "#1a1a2e",
+  red: "#e94560",
+  green: "#4ecca3",
+  yellow: "#f9a825",
+  blue: "#64b5f6",
+  magenta: "#e040fb",
+  cyan: "#4dd0e1",
+  white: "#e0e0e0",
+  brightBlack: "#4a4a6a",
+  brightRed: "#ff6b81",
+  brightGreen: "#7ee8c7",
+  brightYellow: "#ffd54f",
+  brightBlue: "#90caf9",
+  brightMagenta: "#ea80fc",
+  brightCyan: "#80deea",
+  brightWhite: "#ffffff",
+};
+const LIGHT_XTERM_THEME: ITheme = {
+  ...DARK_XTERM_THEME,
+  background: "#12121c",
+  foreground: "#e4e2ee",
+  cursor: "#d1264a",
+  selectionBackground: "#3f3d58",
+};
+function xtermThemeFor(theme: "light" | "dark"): ITheme {
+  return theme === "light" ? LIGHT_XTERM_THEME : DARK_XTERM_THEME;
+}
 
 function handleFocus() {
   if (xterm) {
@@ -46,28 +85,7 @@ onMounted(async () => {
     fontWeightBold: 600,
     lineHeight: 1.25,
     letterSpacing: 0,
-    theme: {
-      background: "#0d0d1a",
-      foreground: "#e0e0e0",
-      cursor: "#e94560",
-      selectionBackground: "#4a4a6a",
-      black: "#1a1a2e",
-      red: "#e94560",
-      green: "#4ecca3",
-      yellow: "#f9a825",
-      blue: "#64b5f6",
-      magenta: "#e040fb",
-      cyan: "#4dd0e1",
-      white: "#e0e0e0",
-      brightBlack: "#4a4a6a",
-      brightRed: "#ff6b81",
-      brightGreen: "#7ee8c7",
-      brightYellow: "#ffd54f",
-      brightBlue: "#90caf9",
-      brightMagenta: "#ea80fc",
-      brightCyan: "#80deea",
-      brightWhite: "#ffffff",
-    },
+    theme: xtermThemeFor(uiStore.resolvedTheme),
     cursorBlink: true,
     cursorStyle: "block",
     scrollback: 10000,
@@ -188,6 +206,16 @@ watch(
   (newId) => {
     if (newId === props.terminalId && xterm) {
       xterm.focus();
+    }
+  }
+);
+
+// Live-update the terminal's colors when the app theme changes.
+watch(
+  () => uiStore.resolvedTheme,
+  (theme) => {
+    if (xterm) {
+      xterm.options.theme = xtermThemeFor(theme);
     }
   }
 );

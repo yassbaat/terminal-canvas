@@ -142,7 +142,7 @@ function onMenuItemClick(action: () => void) {
 }
 
 .menu-item-danger:hover {
-  background: rgba(233, 69, 96, 0.1);
+  background: var(--tc-accent-soft);
 }
 
 .menu-separator {

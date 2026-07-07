@@ -18,6 +18,20 @@ const DEFAULT_SETTINGS: WorkspaceSettings = {
   defaultShellId: null,
 };
 
+// Cycled automatically so every new group is visually distinct without the
+// user having to pick a color manually (color-coding was previously dead:
+// nothing ever passed `color`, so every group rendered with no color at all).
+const GROUP_COLORS = [
+  "#e94560", // accent red
+  "#4ecca3", // green
+  "#64b5f6", // blue
+  "#f9a825", // amber
+  "#e040fb", // magenta
+  "#4dd0e1", // cyan
+  "#ab47bc", // purple
+  "#ff8a65", // orange
+];
+
 /**
  * Pinia store for managing workspace state.
  * Handles workspace CRUD, viewport tracking, groups, and persistence.
@@ -221,7 +235,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       width: options.width ?? 400,
       height: options.height ?? 300,
       collapsed: options.collapsed ?? false,
-      color: options.color,
+      color: options.color ?? GROUP_COLORS[groupCount.value % GROUP_COLORS.length],
       terminalIds: options.terminalIds ?? [],
       noteIds: options.noteIds ?? [],
     };
@@ -266,11 +280,22 @@ export const useWorkspaceStore = defineStore("workspace", () => {
    */
   function addTerminalToGroup(terminalId: string, groupId: string): void {
     if (!currentWorkspace.value) return;
+    const terminalStore = useTerminalStore();
+    const s = terminalStore.sessions.get(terminalId);
+
+    // If it belongs to a different group, leave that one first so a
+    // terminal is never listed under two groups at once.
+    if (s?.groupId && s.groupId !== groupId) {
+      const prev = currentWorkspace.value.groups.find((g) => g.id === s.groupId);
+      if (prev) prev.terminalIds = prev.terminalIds.filter((id) => id !== terminalId);
+    }
+
     const g = currentWorkspace.value.groups.find((g) => g.id === groupId);
     if (g && !g.terminalIds.includes(terminalId)) {
       g.terminalIds.push(terminalId);
       currentWorkspace.value.updatedAt = Date.now();
     }
+    if (s) s.groupId = groupId;
   }
 
   /**
@@ -544,5 +569,60 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   /**
-   * Apply partial settings update to the current workspace.
+   * Apply a partial settings update to the current workspace.
+   */
+  function updateSettings(patch: Partial<WorkspaceSettings>): void {
+    if (!currentWorkspace.value) return;
+    currentWorkspace.value.settings = { ...currentWorkspace.value.settings, ...patch };
+    currentWorkspace.value.updatedAt = Date.now();
+  }
+
+  return {
+    // State
+    currentWorkspace,
+    workspaceList,
+    isSaving,
+    lastSavedAt,
+    selectedNoteIds,
+    selectedGroupIds,
+    fitViewTargetId,
+    // Getters
+    viewport,
+    settings,
+    workspaceName,
+    isDirty,
+    groups,
+    groupCount,
+    edges,
+    stickyNotes,
+    // Actions
+    createNewWorkspace,
+    saveCurrentWorkspace,
+    loadWorkspaceList,
+    loadWorkspace,
+    deleteWorkspace,
+    updateViewport,
+    addGroup,
+    createGroup,
+    updateGroup,
+    removeGroup,
+    addTerminalToGroup,
+    removeTerminalFromGroup,
+    groupSelectedTerminals,
+    addEdge,
+    removeEdge,
+    removeEdgesForTerminal,
+    createStickyNote,
+    updateStickyNote,
+    removeStickyNote,
+    unpinNotesForTerminal,
+    setNoteSelected,
+    toggleNoteSelected,
+    clearNoteSelection,
+    setGroupSelected,
+    toggleGroupSelected,
+    clearGroupSelection,
+    updateSettings,
+  };
+});
  

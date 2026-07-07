@@ -7,6 +7,8 @@ import type {
 } from "@renderer/type/terminal";
 import type { Group } from "@renderer/type/workspace";
 import { findNonOverlappingPosition } from "@renderer/util/placement";
+import { playAttentionChime } from "@renderer/util/sound";
+import { useUIStore } from "@renderer/store/ui";
 
 /**
  * Pinia store for managing terminal sessions.
@@ -48,6 +50,14 @@ export const useTerminalStore = defineStore("terminal", () => {
     Array.from(selectedTerminalIds.value)
       .map((id) => sessions.value.get(id))
       .filter(Boolean) as TerminalSession[]
+  );
+
+  /** Terminals currently flagged for attention, most-recently-flagged first --
+   * the order the "jump to idle terminal" toolbar button steps through. */
+  const attentionSessions = computed(() =>
+    allSessions.value
+      .filter((s) => s.needsAttention)
+      .sort((a, b) => (b.lastAttentionAt ?? 0) - (a.lastAttentionAt ?? 0))
   );
 
   // ─── Actions ─────────────────────────────────────────────────────
@@ -175,9 +185,29 @@ export const useTerminalStore = defineStore("terminal", () => {
 
   /**
    * Set which terminal is currently focused (receives keyboard input).
+   * Viewing/focusing a terminal counts as having "seen" it, so this also
+   * clears its attention flag (bell/idle notification), matching how most
+   * apps treat unread badges.
    */
   function setFocused(id: string | null): void {
     focusedTerminalId.value = id;
+    if (id) {
+      const s = sessions.value.get(id);
+      if (s) s.needsAttention = false;
+    }
+  }
+
+  /**
+   * Toggle idle/bell attention detection for a single terminal ("Off Duty").
+   */
+  async function setIdleDetectionEnabled(id: string, enabled: boolean): Promise<void> {
+    await window.api.terminal.setIdleDetectionEnabled(id, enabled);
+    const s = sessions.value.get(id);
+    if (s) {
+      s.idleDetectionEnabled = enabled;
+      if (!enabled) s.needsAttention = false;
+      s.updatedAt = Date.now();
+    }
   }
 
   /**
@@ -331,6 +361,25 @@ export const useTerminalStore = defineStore("terminal", () => {
         s.updatedAt = Date.now();
       }
     });
+
+    // Terminal needs attention (idle after being busy, or rang the bell).
+    // Skip the flag/sound entirely if this terminal is the one currently
+    // focused -- you're already looking at it.
+    window.api.terminal.onAttention(({ terminalId, reason }) => {
+      const s = sessions.value.get(terminalId);
+      if (!s) return;
+      if (focusedTerminalId.value === terminalId) return;
+
+      s.needsAttention = true;
+      s.attentionReason = reason;
+      s.lastAttentionAt = Date.now();
+      s.updatedAt = Date.now();
+
+      const uiStore = useUIStore();
+      if (!uiStore.soundMuted) {
+        playAttentionChime();
+      }
+    });
   }
 
   return {
@@ -347,6 +396,7 @@ export const useTerminalStore = defineStore("terminal", () => {
     getSession,
     sessionsInGroup,
     selectedSessions,
+    attentionSessions,
     // Actions
     createSession,
     killSession,
@@ -366,6 +416,7 @@ export const useTerminalStore = defineStore("terminal", () => {
     writeToTerminal,
     clearTerminal,
     openCwdInExplorer,
+    setIdleDetectionEnabled,
     setupListeners,
   };
 });

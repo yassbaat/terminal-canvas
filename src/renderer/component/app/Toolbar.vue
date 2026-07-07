@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from "vue";
+import { useVueFlow } from "@vue-flow/core";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useUIStore } from "@renderer/store/ui";
@@ -6,6 +8,44 @@ import { useUIStore } from "@renderer/store/ui";
 const terminalStore = useTerminalStore();
 const workspaceStore = useWorkspaceStore();
 const uiStore = useUIStore();
+// Same id as <VueFlow id="canvas"> in WorkspaceCanvas.vue -- useVueFlow looks
+// up a shared store by id, so this connects to the real canvas instance
+// even though Toolbar isn't a descendant of it.
+const { setCenter, getViewport } = useVueFlow("canvas");
+
+const attentionCount = computed(() => terminalStore.attentionSessions.length);
+
+/**
+ * Jump to the terminal that most recently needed attention. Focusing it
+ * clears its flag (see terminalStore.setFocused), so the NEXT click
+ * naturally advances to whichever is now most recent among the rest --
+ * no separate cursor/index to manage.
+ */
+function jumpToNextAttention(): void {
+  const next = terminalStore.attentionSessions[0];
+  if (!next) {
+    uiStore.showToast("No terminals need attention");
+    return;
+  }
+  const width = next.node.width || 640;
+  const height = next.node.height || 400;
+  const centerX = next.node.x + width / 2;
+  const centerY = next.node.y + height / 2;
+  setCenter(centerX, centerY, { zoom: Math.max(getViewport().zoom, 0.75), duration: 400 });
+  terminalStore.setFocused(next.id);
+}
+
+const themeIcon = computed(() => {
+  if (uiStore.themePreference === "system") return "\u{1F5A5}"; // desktop
+  return uiStore.themePreference === "dark" ? "\u{1F319}" : "☀️"; // moon / sun
+});
+const themeLabel = computed(() => {
+  const pref = uiStore.themePreference;
+  return pref.charAt(0).toUpperCase() + pref.slice(1);
+});
+const themeTitle = computed(
+  () => `Theme: ${themeLabel.value} (click to cycle Dark → Light → System)`
+);
 
 async function quickNewTerminal() {
   const shellId =
@@ -137,9 +177,22 @@ function toggleInspector() {
     
     <div class="toolbar-right">
       <span v-if="workspaceStore.isSaving" class="toolbar-status">Saving...</span>
+      <button
+        v-if="attentionCount > 0"
+        class="toolbar-btn attention-btn"
+        :title="`${attentionCount} terminal(s) need attention — click to jump to the most recent`"
+        @click="jumpToNextAttention"
+      >
+        <span class="toolbar-icon">&#128276;</span>
+        <span>{{ attentionCount }}</span>
+      </button>
       <button class="toolbar-btn" title="Command Palette (Ctrl+Shift+P)" @click="openPalette">
         <span class="toolbar-icon">&#x2318;</span>
         <span>Palette</span>
+      </button>
+      <button class="toolbar-btn" :title="themeTitle" @click="uiStore.cycleTheme()">
+        <span class="toolbar-icon">{{ themeIcon }}</span>
+        <span>{{ themeLabel }}</span>
       </button>
       <button class="toolbar-btn" title="Settings" @click="openSettings">
         <span class="toolbar-icon">&#x2699;</span>
@@ -228,6 +281,15 @@ function toggleInspector() {
   color: var(--tc-text-muted);
   margin-right: 8px;
   animation: pulse 1s ease infinite;
+}
+
+.attention-btn {
+  color: var(--tc-warning);
+}
+
+.attention-btn:hover {
+  background: var(--tc-warning-soft);
+  color: var(--tc-warning);
 }
 
 @keyframes pulse {

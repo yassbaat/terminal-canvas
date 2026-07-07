@@ -83,5 +83,21 @@ export function registerTerminalIPC(window: BrowserWindow): void {
     }
   });
 
+  ipcMain.handle("terminal:setIdleThreshold", async (_, { ms }) => {
+    try {
+      terminalManager.setIdleThresholdMs(ms);
+    } catch (error) {
+      logger.error("IPC: terminal:setIdleThreshold failed", error);
+    }
+  });
+
+  ipcMain.handle("terminal:setIdleDetectionEnabled", async (_, { terminalId, enabled }) => {
+    try {
+      terminalManager.setIdleDetectionEnabled(terminalId, enabled);
+    } catch (error) {
+      logger.error(`IPC: terminal:setIdleDetectionEnabled failed for ${terminalId}`, error);
+    }
+  });
+
   logger.info("Terminal IPC handlers registered");
 }

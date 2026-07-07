@@ -27,9 +27,15 @@
 
   /* Status */
   --tc-success: #4ecca3;
+  --tc-success-soft: rgba(78, 204, 163, 0.1);
   --tc-warning: #f9a825;
+  --tc-warning-soft: rgba(249, 168, 37, 0.1);
   --tc-error: #e94560;
   --tc-info: #64b5f6;
+
+  /* Group containers (canvas) */
+  --tc-group-bg: rgba(30, 30, 47, 0.3);
+  --tc-group-selected-bg: rgba(233, 69, 96, 0.05);
 
   /* Terminal status dots */
   --tc-status-running: #4ecca3;
@@ -88,4 +94,74 @@
   --tc-z-statusbar: 103;
   --tc-z-modal: 200;
   --tc-z-tooltip: 300;
+}
+
+/*
+ * Light theme -- overrides applied when <html data-theme="light">.
+ * Not a naive inversion: contrast, the accent hue, and status colors are
+ * each re-tuned to stay legible and consistent-looking on a light ground.
+ * Font/spacing/z-index/transition tokens are shared and not redefined here.
+ */
+:root[data-theme="light"] {
+  /* Base backgrounds */
+  --tc-bg-primary: #f4f3fa;
+  --tc-bg-secondary: #e9e8f3;
+  --tc-bg-tertiary: #dde6f7;
+  --tc-bg-card: #ffffff;
+  --tc-bg-header: #f2f1f9;
+  --tc-bg-hover: #ebeaf5;
+  --tc-bg-active: #e0dff0;
+
+  /* Borders */
+  --tc-border-color: #dcdae8;
+  --tc-border-focus: #b7b4d0;
+
+  /* Text */
+  --tc-text-primary: #1c1b2e;
+  --tc-text-secondary: #55536e;
+  --tc-text-muted: #86849c;
+  --tc-text-inverse: #ffffff;
+
+  /* Accent (deepened slightly for AA contrast on white) */
+  --tc-accent: #d1264a;
+  --tc-accent-hover: #b81f3f;
+  --tc-accent-soft: rgba(209, 38, 74, 0.12);
+
+  /* Status */
+  --tc-success: #1f9d78;
+  --tc-success-soft: rgba(31, 157, 120, 0.1);
+  --tc-warning: #a86a06;
+  --tc-warning-soft: rgba(168, 106, 6, 0.1);
+  --tc-error: #d1264a;
+  --tc-info: #2f6fb0;
+
+  /* Terminal status dots */
+  --tc-status-running: #1f9d78;
+  --tc-status-starting: #a86a06;
+  --tc-status-exited: #8b899e;
+  --tc-status-crashed: #d1264a;
+  --tc-status-killed: #c1552c;
+
+  /* Terminal area -- kept dark deliberately; ANSI palettes are tuned for a
+     dark ground and every other terminal app keeps this convention. See
+     XtermView.vue for the matching light-mode xterm color theme. */
+  --tc-terminal-bg: #12121c;
+  --tc-terminal-text: #e4e2ee;
+
+  /* Agent Memory (Prompt Rail) */
+  --tc-memory-bg: #f6f5fb;
+  --tc-memory-border: #e0deec;
+  --tc-memory-item-bg: #ffffff;
+  --tc-memory-item-hover: #ece9f7;
+  --tc-memory-pinned-bg: rgba(31, 157, 120, 0.08);
+  --tc-memory-pinned-border: rgba(31, 157, 120, 0.3);
+
+  /* Group containers (canvas) */
+  --tc-group-bg: rgba(180, 178, 210, 0.16);
+  --tc-group-selected-bg: rgba(209, 38, 74, 0.05);
+
+  /* Shadows -- lighter alpha; heavy dark shadows read as smudges on white */
+  --tc-shadow-sm: 0 1px 3px rgba(30, 30, 60, 0.08);
+  --tc-shadow-md: 0 4px 12px rgba(30, 30, 60, 0.1);
+  --tc-shadow-lg: 0 8px 24px rgba(30, 30, 60, 0.14);
 }

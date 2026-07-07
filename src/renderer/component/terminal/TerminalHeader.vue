@@ -40,14 +40,10 @@ const statusColor = computed(() => {
 
 const shortCwd = computed(() => shortenCwd(props.session.cwd, 50));
 
-const projectLabel = computed(() => {
-  if (props.session.projectName) {
-    return props.session.cwd.startsWith(props.session.repoRoot || "")
-      ? `${props.session.projectName} ${shortCwd.value.slice(props.session.projectName.length)}`
-      : props.session.projectName;
-  }
-  return shortCwd.value;
-});
+// `shortCwd` already ends with the project name (it's the last path segment),
+// so it alone is the correct breadcrumb. `repoRoot` is reserved for future
+// repo-aware naming but isn't populated yet, so don't branch on it here.
+const projectLabel = computed(() => shortCwd.value);
 
 const isRenaming = ref(false);
 const renameValue = ref("");
@@ -77,6 +73,10 @@ function cancelRename() {
 function openCwd() {
   window.api.terminal.openCwdInExplorer(props.session.id);
 }
+
+function toggleOffDuty() {
+  terminalStore.setIdleDetectionEnabled(props.session.id, !props.session.idleDetectionEnabled);
+}
 </script>
 
 <template>
@@ -105,6 +105,16 @@ function openCwd() {
       </div>
     </div>
     <div class="header-actions">
+      <button
+        class="header-btn"
+        :class="{ 'header-btn-active': !session.idleDetectionEnabled }"
+        :title="session.idleDetectionEnabled
+          ? 'On duty — will flag when idle or it rings the bell'
+          : 'Off duty — idle/bell attention is disabled for this terminal'"
+        @click="toggleOffDuty"
+      >
+        <span class="header-btn-icon">{{ session.idleDetectionEnabled ? "\u{1F514}" : "\u{1F515}" }}</span>
+      </button>
       <button class="header-btn" title="Rename" @click="startRename">
         <span class="header-btn-icon">R</span>
       </button>
@@ -240,6 +250,11 @@ function openCwd() {
 .header-btn:hover {
   background: var(--tc-bg-hover);
   color: var(--tc-text-primary);
+}
+
+.header-btn-active {
+  color: var(--tc-warning);
+  opacity: 0.85;
 }
 
 .header-btn-close {

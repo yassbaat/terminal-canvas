@@ -6,6 +6,7 @@ import type {
   TerminalExitEvent,
   TerminalCwdEvent,
   TerminalRenamedEvent,
+  TerminalAttentionEvent,
 } from "@renderer/type/terminal";
 import type { PromptEntry, CreatePromptOptions } from "@renderer/type/prompt";
 import type { Workspace, WorkspaceSummary, SaveWorkspaceOptions } from "@renderer/type/workspace";
@@ -20,10 +21,13 @@ export interface TerminalAPI {
   clear(terminalId: string): Promise<void>;
   listShells(): Promise<ShellInfo[]>;
   openCwdInExplorer(terminalId: string): Promise<void>;
+  setIdleThreshold(ms: number): Promise<void>;
+  setIdleDetectionEnabled(terminalId: string, enabled: boolean): Promise<void>;
   onData(callback: (event: TerminalDataEvent) => void): () => void;
   onExit(callback: (event: TerminalExitEvent) => void): () => void;
   onCwdChanged(callback: (event: TerminalCwdEvent) => void): () => void;
   onRenamed(callback: (event: TerminalRenamedEvent) => void): () => void;
+  onAttention(callback: (event: TerminalAttentionEvent) => void): () => void;
 }
 
 export interface PromptAPI {
@@ -71,6 +75,7 @@ export interface DialogAPI {
 }
 
 export interface PreloadAPI {
+  platform: NodeJS.Platform;
   terminal: TerminalAPI;
   prompt: PromptAPI;
   workspace: WorkspaceAPI;

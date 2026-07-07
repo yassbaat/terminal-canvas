@@ -13,6 +13,15 @@ export interface TerminalNamingState {
   error: string | null;
 }
 
+/**
+ * Why a terminal was flagged as needing attention:
+ * - "idle" -- it produced output continuously for at least the configured
+ *   threshold, then went quiet (heuristic for "the command/agent finished").
+ * - "bell" -- it emitted a BEL (\x07) character, an explicit signal many
+ *   CLIs (including coding agents) send when they want your attention.
+ */
+export type AttentionReason = "idle" | "bell";
+
 export interface TerminalSession {
   id: string;
   name: string;
@@ -41,6 +50,11 @@ export interface TerminalSession {
   groupId: string | null;
   node: TerminalNodeData;
   naming: TerminalNamingState;
+  needsAttention: boolean;
+  lastAttentionAt: number | null;
+  attentionReason: AttentionReason | null;
+  /** "Off duty" terminals are excluded from idle/bell attention detection. */
+  idleDetectionEnabled: boolean;
 }
 
 export interface ShellInfo {
@@ -94,6 +108,11 @@ export interface TerminalRenamedEvent {
   terminalId: string;
   name: string;
   reason: string;
+}
+
+export interface TerminalAttentionEvent {
+  terminalId: string;
+  reason: AttentionReason;
 }
 
 export interface TerminalNodeProps {

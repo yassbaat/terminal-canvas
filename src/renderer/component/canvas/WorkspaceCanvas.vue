@@ -7,12 +7,26 @@ import { MiniMap } from "@vue-flow/minimap";
 import type { Node, NodeChange, NodeDimensionChange, NodeSelectionChange, GraphNode } from "@vue-flow/core";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
+import { useUIStore } from "@renderer/store/ui";
 import TerminalNode from "./TerminalNode.vue";
 import GroupNode from "./GroupNode.vue";
 import StickyNoteNode from "./StickyNoteNode.vue";
 
 const terminalStore = useTerminalStore();
 const workspaceStore = useWorkspaceStore();
+const uiStore = useUIStore();
+
+// Vue Flow's Background/MiniMap take plain color props (not CSS custom
+// properties resolved through style), so they need theme-reactive JS values
+// rather than var(--tc-...) references.
+const dotColor = computed(() => (uiStore.resolvedTheme === "light" ? "#d6d3e6" : "#2a2a40"));
+const minimapMaskColor = computed(() =>
+  uiStore.resolvedTheme === "light" ? "rgba(244, 243, 250, 0.7)" : "rgba(26, 26, 46, 0.7)"
+);
+const minimapNodeColor = computed(() => (node: Node) => {
+  if (node.type === "group") return "rgba(78, 204, 163, 0.3)";
+  return uiStore.resolvedTheme === "light" ? "#e0dff0" : "#1e1e2f";
+});
 
 // --- Figma-like Pan / Select State --------------------------------
 
@@ -38,15 +52,23 @@ function onPanKeyUp(e: KeyboardEvent): void {
   }
 }
 
+// Must match the <VueFlow id="canvas"> below. useVueFlow() looks up (or
+// creates) a store instance by id in a shared registry -- calling it with no
+// id here would create a SEPARATE, disconnected store, since this component
+// is the parent of <VueFlow>, not a descendant that could inject its
+// provided instance. That silently broke onPaneClick, onSelectionDragStop,
+// zoomIn/zoomOut/zoomTo, and the store-selection-sync watch below.
 const {
-  onNodeClick,
   onPaneClick,
   onSelectionDragStop,
   getSelectedNodes,
   getNode,
   addSelectedNodes,
   removeSelectedNodes,
-} = useVueFlow();
+  zoomIn,
+  zoomOut,
+  zoomTo,
+} = useVueFlow("canvas");
 
 // Register custom node types
 const nodeTypes: Record<string, any> = {
@@ -225,6 +247,47 @@ watch(
  * Handle node drag stop -- sync final position back to the store.
  * Also moves pinned sticky notes with their terminal.
  */
+
+/**
+ * Find the group whose bounds contain a given canvas-space point, so a
+ * terminal dropped visually inside a group frame joins it (and one dragged
+ * out of its group's bounds leaves it) -- the same "drop into a frame"
+ * semantics as Figma, rather than requiring the explicit Ctrl+G/Group
+ * button for every membership change.
+ */
+function groupContainingPoint(x: number, y: number): string | null {
+  for (const g of workspaceStore.groups) {
+    if (g.collapsed) continue;
+    if (x >= g.x && x <= g.x + g.width && y >= g.y && y <= g.y + g.height) {
+      return g.id;
+    }
+  }
+  return null;
+}
+
+/**
+ * Update a terminal's group membership based on where its center point
+ * landed after a drag. No-ops if membership hasn't changed.
+ */
+function syncGroupMembershipAfterDrag(terminalId: string, node: Node): void {
+  const session = terminalStore.sessions.get(terminalId);
+  if (!session) return;
+  // Dimensions don't change during a reposition drag, so the session's last
+  // known size (kept up to date by resize handling) is accurate here.
+  const width = session.node.width || 640;
+  const height = session.node.height || 400;
+  const centerX = node.position.x + width / 2;
+  const centerY = node.position.y + height / 2;
+  const targetGroupId = groupContainingPoint(centerX, centerY);
+
+  if (targetGroupId === session.groupId) return;
+  if (targetGroupId) {
+    workspaceStore.addTerminalToGroup(terminalId, targetGroupId);
+  } else if (session.groupId) {
+    workspaceStore.removeTerminalFromGroup(terminalId, session.groupId);
+  }
+}
+
 function handleNodeDragStop({ node }: { node: Node }): void {
   if (node.type === "terminal") {
     const session = terminalStore.sessions.get(node.id);
@@ -237,6 +300,7 @@ function handleNodeDragStop({ node }: { node: Node }): void {
       x: node.position.x,
       y: node.position.y,
     });
+    syncGroupMembershipAfterDrag(node.id, node);
 
     // Move pinned notes with the terminal
     if (dx !== 0 || dy !== 0) {
@@ -279,13 +343,16 @@ function handleViewportChange(viewport: { x: number; y: number; zoom: number }):
 // --- Node Click / Selection ---------------------------------------
 
 /**
- * When a terminal node is clicked, focus it for keyboard input.
+ * Note: clicking a terminal node does NOT set keyboard focus here.
+ * Vue Flow's onNodeClick fires for a click anywhere on the card -- header,
+ * footer, chrome -- which previously grabbed real keyboard focus for the
+ * whole card (via a watcher that calls xterm.focus()) just from a plain
+ * *selection* click. That silently swallowed canvas shortcuts like Ctrl+G
+ * the moment you selected two terminals to group them. Focus is granted
+ * exclusively by clicking into the terminal's own body (see
+ * TerminalNode.vue's .terminal-area and XtermView.vue's mousedown handler),
+ * which is the only place "I want to type here" actually means that.
  */
-onNodeClick(({ node }) => {
-  if (node.type === "terminal") {
-    terminalStore.setFocused(node.id);
-  }
-});
 
 /**
  * When the canvas (pane) is clicked, unfocus any focused terminal.
@@ -309,6 +376,7 @@ onSelectionDragStop(({ nodes }) => {
         x: node.position.x,
         y: node.position.y,
       });
+      syncGroupMembershipAfterDrag(node.id, node);
       movedTerminals.push({ id: node.id, dx: node.position.x - oldX, dy: node.position.y - oldY });
     } else if (node.type === "group") {
       workspaceStore.updateGroup(node.id, {
@@ -362,18 +430,61 @@ function handleKeyDown(e: KeyboardEvent): void {
     return;
   }
 
-  // Delete / Backspace: remove selected terminals, edges, and sticky notes
+  // Ctrl/Cmd + Plus (or =): zoom in
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && (e.key === "+" || e.key === "=")) {
+    zoomIn({ duration: 150 });
+    e.preventDefault();
+    return;
+  }
+
+  // Ctrl/Cmd + Minus: zoom out
+  if (mod && (e.key === "-" || e.key === "_")) {
+    zoomOut({ duration: 150 });
+    e.preventDefault();
+    return;
+  }
+
+  // Ctrl/Cmd + 0: reset zoom to 100%
+  if (mod && e.key === "0") {
+    zoomTo(1, { duration: 150 });
+    e.preventDefault();
+    return;
+  }
+
+  // Delete / Backspace: remove selected terminals, notes, and groups
   if (e.key === "Delete" || e.key === "Backspace") {
-    const selected = Array.from(terminalStore.selectedTerminalIds);
-    if (selected.length > 0) {
-      for (const id of selected) {
-        terminalStore.killSession(id);
-        terminalStore.removeSession(id);
-        workspaceStore.removeEdgesForTerminal(id);
-        workspaceStore.unpinNotesForTerminal(id);
-      }
-      terminalStore.clearSelection();
+    const selectedTerminals = Array.from(terminalStore.selectedTerminalIds);
+    const selectedNotes = Array.from(workspaceStore.selectedNoteIds);
+    const selectedGroups = Array.from(workspaceStore.selectedGroupIds);
+    const total = selectedTerminals.length + selectedNotes.length + selectedGroups.length;
+    if (total === 0) return;
+
+    for (const id of selectedTerminals) {
+      terminalStore.killSession(id);
+      terminalStore.removeSession(id);
+      workspaceStore.removeEdgesForTerminal(id);
+      workspaceStore.unpinNotesForTerminal(id);
     }
+    terminalStore.clearSelection();
+
+    for (const id of selectedNotes) {
+      workspaceStore.removeStickyNote(id);
+    }
+    workspaceStore.clearNoteSelection();
+
+    // Ungroup (not destructive to the terminals inside) rather than kill them.
+    for (const id of selectedGroups) {
+      workspaceStore.removeGroup(id);
+    }
+    workspaceStore.clearGroupSelection();
+
+    const parts: string[] = [];
+    if (selectedTerminals.length) parts.push(`${selectedTerminals.length} terminal(s)`);
+    if (selectedNotes.length) parts.push(`${selectedNotes.length} note(s)`);
+    if (selectedGroups.length) parts.push(`${selectedGroups.length} group(s)`);
+    uiStore.showToast(`Removed ${parts.join(", ")}`);
+
     e.preventDefault();
     return;
   }
@@ -402,10 +513,13 @@ onUnmounted(() => {
     :default-viewport="workspaceStore.viewport"
     :min-zoom="0.1"
     :max-zoom="2"
+    :pan-on-scroll="true"
+    :zoom-on-scroll="false"
+    :zoom-on-pinch="true"
     :connectable="true"
     :delete-key-code="null"
     :selection-key-code="selectionKeyCode"
-    :multi-selection-key-code="'Control'"
+    :multi-selection-key-code="['Control', 'Meta']"
     :pan-on-drag="panOnDrag"
     :selection-mode="SelectionMode.Partial"
     :fit-view-on-init="true"
@@ -419,7 +533,7 @@ onUnmounted(() => {
       :variant="BackgroundVariant.Dots"
       :gap="20"
       :size="1"
-      color="#2a2a40"
+      :color="dotColor"
     />
 
     <!-- Zoom controls -->
@@ -429,12 +543,8 @@ onUnmounted(() => {
     <MiniMap
       pannable
       zoomable
-      :node-color="(node: Node) =>
-        node.type === 'group'
-          ? 'rgba(78, 204, 163, 0.3)'
-          : '#1e1e2f'
-      "
-      :mask-color="'rgba(26, 26, 46, 0.7)'"
+      :node-color="minimapNodeColor"
+      :mask-color="minimapMaskColor"
     />
 
     <!-- Status overlay panel -->

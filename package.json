@@ -23,7 +23,8 @@
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win",
-    "postinstall": "electron-builder install-app-deps"
+    "dist:mac": "npm run build && electron-builder --mac",
+    "postinstall": "node scripts/fix-native-perms.cjs && electron-builder install-app-deps"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
@@ -39,6 +40,7 @@
     "electron-builder": "^24.9.0",
     "npm-run-all": "^4.1.5",
     "pinia": "^2.1.7",
+    "playwright-core": "^1.61.1",
     "typescript": "^6.0.3",
     "vite": "^5.0.0",
     "vue": "^3.4.0",
@@ -58,6 +60,9 @@
     "files": [
       "dist",
       "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/node-pty/**"
     ],
     "win": {
       "target": [
@@ -80,6 +85,28 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ]
     }
   }
 }

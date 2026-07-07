@@ -32,6 +32,13 @@ const isFocused = computed(
   () => terminalStore.focusedTerminalId === props.id
 );
 
+// Does it need attention (idle after being busy, or rang the bell)?
+const needsAttention = computed(() => props.data.session.needsAttention);
+
+function acknowledgeAttention(): void {
+  terminalStore.setFocused(props.id);
+}
+
 // Handle click on the terminal body — focus it
 function handleBodyClick(): void {
   terminalStore.setFocused(props.id);
@@ -72,12 +79,19 @@ watch(
 <template>
   <div
     class="terminal-node"
-    :class="{ selected, focused: isFocused, dragging }"
-    @click="handleBodyClick"
+    :class="{ selected, focused: isFocused, dragging, 'needs-attention': needsAttention }"
     @wheel.stop
   >
     <Handle type="target" :position="Position.Top" />
     <NodeResizer :min-width="300" :min-height="200" />
+    <button
+      v-if="needsAttention"
+      class="attention-badge"
+      :title="data.session.attentionReason === 'bell' ? 'Rang the bell — click to view' : 'Looks idle — click to view'"
+      @click.stop="acknowledgeAttention"
+    >
+      &#128276;
+    </button>
     <div class="terminal-node-inner">
       <!-- Header: drag handle + session info + controls -->
       <TerminalHeader
@@ -116,10 +130,12 @@ watch(
 
 <style scoped>
 .terminal-node {
+  position: relative;
   width: 100%;
   height: 100%;
   border-radius: var(--tc-border-radius);
-  overflow: hidden;
+  /* No overflow:hidden here (unlike terminal-node-inner) so the attention
+     badge can sit just outside the card's corner without being clipped. */
 }
 
 .terminal-node-inner {
@@ -145,6 +161,46 @@ watch(
 
 .terminal-node.selected.focused .terminal-node-inner {
   box-shadow: 0 0 0 2px var(--tc-accent), var(--tc-shadow-lg);
+}
+
+.terminal-node.needs-attention .terminal-node-inner {
+  box-shadow: 0 0 0 2px var(--tc-warning), var(--tc-shadow-lg);
+  animation: attention-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-node.needs-attention .terminal-node-inner {
+    animation: none;
+  }
+}
+
+@keyframes attention-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--tc-warning), var(--tc-shadow-lg); }
+  50% { box-shadow: 0 0 0 4px var(--tc-warning), var(--tc-shadow-lg); }
+}
+
+.attention-badge {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid var(--tc-bg-primary);
+  background: var(--tc-warning);
+  color: #1a1a2e;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 20;
+  box-shadow: var(--tc-shadow-sm);
+  padding: 0;
+}
+
+.attention-badge:hover {
+  filter: brightness(1.1);
 }
 
 .terminal-node-body {

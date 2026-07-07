@@ -100,12 +100,13 @@ async function finish() {
   // Mark onboarding as complete
   localStorage.setItem("terminal-canvas:onboarded", "true");
 
-  // Create a first terminal
-  await terminalStore.createSession({
-    shellId: selectedShellId.value || terminalStore.shells[0]?.id || "cmd",
-    cols: 80,
-    rows: 24,
-  });
+  // Create a first terminal (skip if no shell is available yet rather than
+  // falling back to a Windows-only id like "cmd" that doesn't exist on
+  // macOS/Linux and would throw "Shell not found").
+  const shellId = selectedShellId.value || terminalStore.shells[0]?.id;
+  if (shellId) {
+    await terminalStore.createSession({ shellId, cols: 80, rows: 24 });
+  }
 
   uiStore.closeOnboarding();
 }
@@ -549,13 +550,13 @@ function finishWithoutTerminal() {
 }
 
 .test-result.success {
-  background: rgba(78, 204, 163, 0.1);
+  background: var(--tc-success-soft);
   color: var(--tc-success);
   border: 1px solid rgba(78, 204, 163, 0.2);
 }
 
 .test-result.error {
-  background: rgba(233, 69, 96, 0.1);
+  background: var(--tc-accent-soft);
   color: var(--tc-error);
   border: 1px solid rgba(233, 69, 96, 0.2);
 }

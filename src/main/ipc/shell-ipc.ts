@@ -10,6 +10,12 @@ const logger = createLogger("ShellIPC");
 
 export function registerShellIPC(): void {
   ipcMain.handle("shell:registerContextMenu", async () => {
+    if (process.platform !== "win32") {
+      return {
+        success: false,
+        error: "The Explorer context menu integration is only available on Windows.",
+      };
+    }
     if (!app.isPackaged) {
       return {
         success: false,
@@ -27,6 +33,9 @@ export function registerShellIPC(): void {
   });
 
   ipcMain.handle("shell:unregisterContextMenu", async () => {
+    if (process.platform !== "win32") {
+      return { success: true };
+    }
     try {
       unregisterContextMenu();
       return { success: true };
@@ -38,6 +47,9 @@ export function registerShellIPC(): void {
   });
 
   ipcMain.handle("shell:isContextMenuRegistered", async () => {
+    if (process.platform !== "win32") {
+      return false;
+    }
     try {
       return isContextMenuRegistered();
     } catch (error) {

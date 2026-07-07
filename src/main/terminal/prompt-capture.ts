@@ -9,6 +9,36 @@ const AGENT_VERBS =
 const AGENT_PHRASES =
   /(read the repo|update the file|run tests|make sure|please|can you|help me|write a|create a|fix the|implement a)/i;
 
+/**
+ * Strip terminal control/escape sequences from raw PTY input before it's
+ * used for prompt-capture bookkeeping.
+ *
+ * xterm.js sends these through the exact same onData channel as real
+ * keystrokes: arrow keys, function keys, bracketed-paste markers, and --
+ * critically -- SGR mouse-tracking reports, which stream continuously while
+ * the mouse moves over a terminal running a mouse-aware program (e.g.
+ * Claude Code's CLI enables mouse mode). Left unstripped, those polluted
+ * "Agent Memory" with a wall of mouse-motion garbage ending in whatever the
+ * user actually typed. None of this is typed text, so none of it belongs in
+ * the captured prompt -- the real PTY still receives the raw, unmodified
+ * data (see writeToTerminal in terminal-manager.ts); only our own
+ * bookkeeping needs the clean version.
+ */
+export function stripInputEscapeSequences(data: string): string {
+  return (
+    data
+      // CSI sequences: ESC [ <parameter bytes 0x30-0x3F> <intermediate bytes
+      // 0x20-0x2F> <final byte 0x40-0x7E>. Covers arrow/function keys, SGR
+      // mouse reports (e.g. "\x1b[<35;21;29M"), and paste markers
+      // ("\x1b[200~" / "\x1b[201~") -- only the markers are stripped, the
+      // pasted text between them is plain characters and passes through.
+      .replace(/\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g, "")
+      // SS3 sequences: ESC O <final byte> -- some function/arrow keys sent
+      // in "application keypad" mode.
+      .replace(/\x1bO[\x40-\x7e]/g, "")
+  );
+}
+
 export interface PromptDetectionResult {
   text: string;
   kind: PromptKind;

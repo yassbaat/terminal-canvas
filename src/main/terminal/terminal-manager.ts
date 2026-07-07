@@ -1,22 +1,77 @@
 import { spawn } from "node-pty";
+import os from "os";
+import path from "path";
 import { createLogger } from "../util/logger";
 import { generateId } from "../util/ids";
 import { detectShells } from "./shell-detector";
-import { processInputBuffer } from "./prompt-capture";
+import { processInputBuffer, stripInputEscapeSequences } from "./prompt-capture";
 import type { ActiveTerminal, ShellConfig, SpawnOptions } from "./terminal-types";
-import type { TerminalSession } from "@renderer/type/terminal";
+import type { TerminalSession, AttentionReason } from "@renderer/type/terminal";
 import type { PromptEntry } from "@renderer/type/prompt";
 import { BrowserWindow } from "electron";
 
 const logger = createLogger("TerminalManager");
 
+// How long output must have been quiet before we consider a busy terminal
+// "settled" (i.e. the running command/agent turn has finished). This is a
+// fixed implementation detail, distinct from the user-configurable
+// idleThresholdMs below (how long it must have been busy beforehand to be
+// worth notifying about at all).
+const QUIET_MS = 1500;
+
 export class TerminalManager {
   private terminals = new Map<string, ActiveTerminal>();
   private shellConfigs: ShellConfig[] = [];
   private ipcWindow: BrowserWindow | null = null;
+  private idleThresholdMs = 2000;
 
   constructor() {
     this.shellConfigs = detectShells();
+  }
+
+  /** How long (ms) a terminal must be continuously busy before its next
+   * quiet period is considered notification-worthy. Guards against firing
+   * on every trivial command. */
+  setIdleThresholdMs(ms: number): void {
+    this.idleThresholdMs = Math.max(0, ms);
+    logger.info(`Idle notification threshold set to ${this.idleThresholdMs}ms`);
+  }
+
+  /** Per-terminal opt-out ("Off Duty") from idle/bell attention detection. */
+  setIdleDetectionEnabled(id: string, enabled: boolean): void {
+    const active = this.terminals.get(id);
+    if (!active) return;
+    active.session.idleDetectionEnabled = enabled;
+    if (!enabled) {
+      active.session.needsAttention = false;
+      this.clearQuietTimer(active);
+    }
+    active.session.updatedAt = Date.now();
+  }
+
+  private clearQuietTimer(active: ActiveTerminal): void {
+    if (active.quietTimer) {
+      clearTimeout(active.quietTimer);
+      active.quietTimer = null;
+    }
+    active.busyStartedAt = null;
+  }
+
+  private flagAttention(id: string, reason: AttentionReason): void {
+    const active = this.terminals.get(id);
+    if (!active) return;
+    if (!active.session.idleDetectionEnabled) return;
+    if (active.session.status !== "running") return;
+
+    active.session.needsAttention = true;
+    active.session.attentionReason = reason;
+    active.session.lastAttentionAt = Date.now();
+    active.session.updatedAt = Date.now();
+
+    if (this.ipcWindow && !this.ipcWindow.isDestroyed()) {
+      this.ipcWindow.webContents.send("terminal:attention", { terminalId: id, reason });
+    }
+    logger.debug(`Terminal ${id} flagged for attention (${reason})`);
   }
 
   setWindow(window: BrowserWindow): void {
@@ -36,16 +91,21 @@ export class TerminalManager {
     const id = options.id || generateId();
     const cols = options.cols ?? 80;
     const rows = options.rows ?? 24;
-    const cwd = options.cwd ?? process.cwd();
+    // process.cwd() is meaningless for a packaged desktop app (it's wherever
+    // the OS happened to launch the process from). Home directory matches
+    // what a normal terminal app opens into.
+    const cwd = options.cwd ?? os.homedir();
 
     // Spawn the PTY process
     const pty = spawn(shellConfig.path, shellConfig.args, {
-      name: "xterm-color",
+      name: "xterm-256color",
       cols,
       rows,
       cwd,
       env: process.env as { [key: string]: string },
-      useConpty: true,
+      // ConPTY is a Windows-only backend; node-pty ignores this on
+      // macOS/Linux, but keep it explicit so intent is clear per platform.
+      ...(process.platform === "win32" ? { useConpty: true } : {}),
     } as any);
 
     const now = Date.now();
@@ -97,6 +157,10 @@ export class TerminalManager {
         pending: false,
         error: null,
       },
+      needsAttention: false,
+      lastAttentionAt: null,
+      attentionReason: null,
+      idleDetectionEnabled: true,
     };
 
     // Set up PTY data handler
@@ -123,6 +187,37 @@ export class TerminalManager {
 
       // Attempt CWD detection from prompt-like output
       this.detectCwdChange(data, session);
+
+      // Bell (\x07) is an explicit "look at me" signal many CLIs (including
+      // coding agents) send on completion -- flag immediately regardless of
+      // how long the command has been running.
+      if (data.includes("\x07")) {
+        this.flagAttention(id, "bell");
+      }
+
+      // Idle heuristic: (re)start a quiet-period timer on every chunk. If
+      // no more output arrives before it fires, the terminal has "settled"
+      // -- and if it was busy for at least idleThresholdMs beforehand, that
+      // settling is worth surfacing (heuristic for "the command/agent
+      // finished and is waiting on you").
+      if (active) {
+        if (active.busyStartedAt === null) {
+          active.busyStartedAt = Date.now();
+        }
+        if (active.quietTimer) clearTimeout(active.quietTimer);
+        active.quietTimer = setTimeout(() => {
+          const stillActive = this.terminals.get(id);
+          if (!stillActive) return;
+          const busyDuration = stillActive.busyStartedAt
+            ? Date.now() - stillActive.busyStartedAt
+            : 0;
+          stillActive.busyStartedAt = null;
+          stillActive.quietTimer = null;
+          if (busyDuration >= this.idleThresholdMs) {
+            this.flagAttention(id, "idle");
+          }
+        }, QUIET_MS);
+      }
     });
 
     // Set up PTY exit handler
@@ -146,6 +241,8 @@ export class TerminalManager {
       shellConfig,
       spawnOptions: { ...options },
       promptHistory: [],
+      busyStartedAt: null,
+      quietTimer: null,
     };
 
     this.terminals.set(id, active);
@@ -168,19 +265,27 @@ export class TerminalManager {
       return;
     }
 
-    active.pty.write(data);
+    active.pty.write(data); // raw, unmodified -- the shell/program must still see everything
     active.session.lastActivityAt = Date.now();
 
-    // Track input buffer for prompt capture
-    if (data === "\r" || data === "\n" || data === "\r\n") {
-      this.flushInputBuffer(id);
-    } else if (data.length === 1 && data.charCodeAt(0) === 127) {
-      // Backspace: remove last char from buffer
-      active.inputBuffer = active.inputBuffer.slice(0, -1);
-    } else if (data.length === 1 && data.charCodeAt(0) < 32) {
-      // Control character (e.g., Ctrl+C, Tab), ignore for buffer
-    } else {
-      active.inputBuffer += data;
+    // Track input buffer for prompt capture. Strip control/escape sequences
+    // first (arrow keys, mouse-tracking reports, paste markers, etc. --
+    // see stripInputEscapeSequences) and walk what's left character by
+    // character, since a single onData chunk can bundle e.g. a mouse report
+    // followed by an Enter keystroke.
+    const cleaned = stripInputEscapeSequences(data);
+    for (const ch of cleaned) {
+      const code = ch.charCodeAt(0);
+      if (ch === "\r" || ch === "\n") {
+        this.flushInputBuffer(id);
+      } else if (code === 127) {
+        // Backspace: remove last char from buffer
+        active.inputBuffer = active.inputBuffer.slice(0, -1);
+      } else if (code < 32) {
+        // Control character (e.g., Ctrl+C, Tab), ignore for buffer
+      } else {
+        active.inputBuffer += ch;
+      }
     }
   }
 
@@ -260,6 +365,7 @@ export class TerminalManager {
     logger.info(`Killing terminal ${id} (PID: ${active.session.pid})`);
     active.session.status = "killed";
     active.session.updatedAt = Date.now();
+    this.clearQuietTimer(active);
     try {
       active.pty.kill();
     } catch (err) {
@@ -274,6 +380,7 @@ export class TerminalManager {
     }
 
     // Kill the old PTY
+    this.clearQuietTimer(active);
     try {
       active.pty.kill();
     } catch {
@@ -334,6 +441,7 @@ export class TerminalManager {
   cleanupAll(): void {
     logger.info(`Cleaning up ${this.terminals.size} terminals`);
     for (const [, active] of this.terminals) {
+      this.clearQuietTimer(active);
       try {
         active.pty.kill();
       } catch {
@@ -414,6 +522,13 @@ export class TerminalManager {
     return { name: result.name, reason: result.reason };
   }
 
+  /** Expand a leading "~" (as shown by the default zsh/bash prompt) to an absolute path. */
+  private expandTilde(p: string): string {
+    if (p === "~") return os.homedir();
+    if (p.startsWith("~/")) return path.join(os.homedir(), p.slice(2));
+    return p;
+  }
+
   /** Extract a display-friendly CWD string. */
   private shortenCwd(cwd: string): string {
     const home = process.env.USERPROFILE || process.env.HOME || "";
@@ -457,10 +572,11 @@ export class TerminalManager {
       return;
     }
 
-    // Look for bash-like prompt: user@host:/path$ or /path $
-    const bashMatch = data.match(/[:\s](\/[\w\-/.\s]*)\s*[\$#]\s*$/m);
+    // Look for bash/zsh-like prompt: user@host:/path$ , /path # , or the
+    // default zsh prompt which shows "~" / "~/sub/dir" and ends in "%".
+    const bashMatch = data.match(/[:\s]((?:~|\/)[\w\-/.\s]*)\s*[\$#%]\s*$/m);
     if (bashMatch && bashMatch[1]) {
-      const detectedCwd = bashMatch[1].trim();
+      const detectedCwd = this.expandTilde(bashMatch[1].trim());
       if (detectedCwd !== session.cwd && detectedCwd.length > 1) {
         session.cwd = detectedCwd;
         session.cwdLabel = this.shortenCwd(detectedCwd);

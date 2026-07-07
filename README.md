@@ -1,10 +1,8 @@
 # Terminal Canvas
 
-> **Figma for coding terminals.** An infinite-canvas workspace for managing multiple coding-agent terminal sessions on Windows.
+> **Figma for coding terminals.** An infinite-canvas workspace for managing multiple coding-agent terminal sessions on Windows and macOS.
 
 Terminal Canvas lets you open many embedded terminals, pan and zoom around them like a canvas, group them into project frames, and keep a visible memory of every prompt you typed -- so you always remember what you asked each coding agent to do.
-
-![Architecture Overview](https://via.placeholder.com/800x450/1a1a2e/e0e0ff?text=Terminal+Canvas+Screenshot)
 
 ---
 
@@ -16,7 +14,7 @@ Terminal Canvas lets you open many embedded terminals, pan and zoom around them 
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Development](#development)
-- [Building for Windows](#building-for-windows)
+- [Building for Windows & macOS](#building-for-windows--macos)
 - [Project Structure](#project-structure)
 - [How It Works](#how-it-works)
   - [PTY Process Lifecycle](#pty-process-lifecycle)
@@ -67,11 +65,17 @@ Terminal Canvas lets you open many embedded terminals, pan and zoom around them 
 - **JSON-Based** -- No external database needed
 
 ### Shells
+**Windows**
 - cmd.exe (always available)
 - Windows PowerShell
 - PowerShell 7 (pwsh)
 - Git Bash (auto-detected)
 - WSL (auto-detected)
+
+**macOS**
+- Your default login shell ($SHELL -- usually zsh), detected first
+- zsh, bash, fish, sh -- whichever are installed
+- All spawned as login + interactive shells, so PATH from `.zshrc`/`.bash_profile`/Homebrew/nvm etc. is available exactly like a normal terminal window
 
 ---
 
@@ -80,7 +84,7 @@ Terminal Canvas lets you open many embedded terminals, pan and zoom around them 
 ```
 Electron Main Process (Node.js)
   |-- TerminalManager (node-pty)
-  |-- ShellDetector (Windows shell discovery)
+  |-- ShellDetector (Windows + macOS shell discovery)
   |-- PromptCapture (input classification & redaction)
   |-- WorkspaceService (JSON persistence)
   |-- GroqNamingService (AI naming via API)
@@ -121,10 +125,10 @@ Vue 3 Renderer (Chromium)
 
 - **Node.js** 18+ (LTS recommended)
 - **npm** 9+ or **pnpm**
-- **Windows 10/11** (primary target platform)
-- (Optional) **Git for Windows** -- for Git Bash shell support
-- (Optional) **WSL** -- for WSL terminal support
-- (Optional) **PowerShell 7** -- for pwsh support
+- **Windows 10/11** or **macOS 11+** (Intel or Apple Silicon)
+- (Windows, optional) **Git for Windows** -- for Git Bash shell support
+- (Windows, optional) **WSL** -- for WSL terminal support
+- (Windows, optional) **PowerShell 7** -- for pwsh support
 - (Optional) **GROQ_API_KEY** -- for AI auto-naming
 
 ---
@@ -164,28 +168,44 @@ The app will open with a default workspace. You can:
 
 ---
 
-## Building for Windows
+## Building for Windows & macOS
 
-### Portable Build
+### Windows
 ```bash
-npm run dist:win
+npm run dist:win     # NSIS installer + portable .exe
 ```
-
-### Installer (NSIS)
-```bash
-npm run dist
-```
-
-### Output
 - Installer: `release/Terminal Canvas Setup.exe`
 - Portable: `release/win-unpacked/Terminal Canvas.exe`
 
+### macOS
+```bash
+npm run dist:mac     # .dmg + .zip, both x64 and arm64
+```
+- Disk image: `release/Terminal Canvas-<version>[-arm64].dmg`
+- Zip: `release/Terminal Canvas-<version>[-arm64]-mac.zip`
+
+The app is not code-signed or notarized (no Apple Developer certificate).
+Gatekeeper will block a plain double-click on first launch -- **right-click
+the app -> Open -> Open** once to approve it, then it launches normally from
+then on. This is expected for an indie/unsigned build and only needs doing once.
+
 ### Building from scratch
 ```bash
-# Clean build
+npm install          # also rebuilds node-pty's native binding for your platform
 npm run build
-npm run dist:win
+npm run dist:win      # or dist:mac
 ```
+
+### Notes for macOS packaging
+- `node-pty`'s native `spawn-helper` binary must remain executable and must
+  **not** be sealed inside `app.asar` (native binaries can't run from there).
+  This repo's `build.asarUnpack` config in `package.json` handles that --
+  don't remove it, and if you fork/rename the package, keep an
+  `asarUnpack` entry matching `node-pty`'s path.
+- `scripts/fix-native-perms.cjs` runs on every `npm install` (via
+  `postinstall`) to force the executable bit on `spawn-helper`, since some
+  npm registries/tarball extraction paths don't preserve it -- without this,
+  every terminal on macOS/Linux fails with "posix_spawnp failed".
 
 ---
 
@@ -205,7 +225,7 @@ terminal-canvas/
     |   |-- index.ts             # Main entry point (window creation, IPC registration)
     |   |-- terminal/
     |   |   |-- terminal-manager.ts    # PTY lifecycle (spawn, kill, resize, restart)
-    |   |   |-- shell-detector.ts      # Windows shell detection
+    |   |   |-- shell-detector.ts      # Windows + macOS shell detection
     |   |   |-- prompt-capture.ts      # Input classification & privacy redaction
     |   |   |-- terminal-types.ts      # Main-process terminal types
     |   |-- workspace/
@@ -374,6 +394,8 @@ Workspaces are saved as JSON files in `%APPDATA%/Terminal Canvas/workspaces/`:
 
 ## Keyboard Shortcuts
 
+`Ctrl` below also works as `Cmd` on macOS -- both modifiers are accepted everywhere.
+
 ### Global / Canvas
 | Shortcut | Action |
 |----------|--------|
@@ -381,13 +403,18 @@ Workspaces are saved as JSON files in `%APPDATA%/Terminal Canvas/workspaces/`:
 | `Ctrl+S` | Save workspace |
 | `Ctrl+G` | Group selected terminals |
 | `Ctrl+Shift+P` | Command palette |
-| `Ctrl+Plus` | Zoom in |
+| `Ctrl+Plus` / `Ctrl+=` | Zoom in |
 | `Ctrl+Minus` | Zoom out |
-| `Ctrl+0` | Reset zoom |
-| `Delete` | Remove selected node (if terminal not focused) |
+| `Ctrl+0` | Reset zoom to 100% |
+| `Delete` / `Backspace` | Remove selected terminals, notes, or ungroup selected groups (terminals inside a group are kept) |
 | `Esc` | Exit terminal focus mode |
-| `Space + drag` | Pan canvas |
-| `Ctrl + wheel` | Zoom canvas |
+| Scroll | Pan canvas |
+| `Ctrl + scroll` / pinch | Zoom canvas |
+| `Space + drag` or middle-click drag | Pan canvas |
+
+Canvas shortcuts are intentionally disabled while a terminal has keyboard
+focus (so `Ctrl+G`, etc. don't get swallowed by your shell) -- click empty
+canvas or press `Esc` first.
 
 ### Terminal Focused
 | Shortcut | Action |
@@ -419,7 +446,11 @@ Terminal Canvas uses the Groq API for AI-powered session naming. To set it up:
 1. **Get an API key** from [console.groq.com](https://console.groq.com)
 2. **Set as environment variable** (recommended):
    ```bash
+   # Windows (cmd)
    set GROQ_API_KEY=gsk_your_key_here
+
+   # macOS / Linux (zsh/bash)
+   export GROQ_API_KEY=gsk_your_key_here
    ```
 3. **Or set in the app:**
    - Open Terminal Canvas
@@ -436,13 +467,14 @@ The default model is `llama-3.1-8b-instant` for fast, low-cost naming. You can c
 
 ## Known Limitations
 
-1. **Windows Only** -- This MVP targets Windows. macOS/Linux support would require shell detection and path handling changes.
-2. **CWD Tracking** -- CWD detection uses heuristics from shell prompts rather than OS-level process querying. Very complex prompts may confuse detection.
+1. **Not Code-Signed** -- No Apple Developer / Windows code-signing certificate yet, so macOS Gatekeeper and Windows SmartScreen will warn on first launch. See the build sections above for the one-time workaround.
+2. **CWD Tracking** -- CWD detection uses heuristics from shell prompts (including the default zsh `~` prompt) rather than OS-level process querying. Very complex/custom prompts may confuse detection.
 3. **Prompt Capture** -- Heuristic-based, not 100% accurate. Password mode detection is basic.
 4. **Workspace Output** -- Full terminal output is not persisted by design (can be very large). Only prompt history is saved.
-5. **WSL Detection** -- Requires `wsl.exe` to be in PATH.
+5. **WSL Detection** (Windows) -- Requires `wsl.exe` to be in PATH.
 6. **Packaging Size** -- Includes Electron and node-pty native modules. First build may take several minutes.
 7. **No Multi-Monitor** -- Dragging terminals across monitors is not explicitly supported in the canvas model.
+8. **Linux** -- Not officially targeted yet, though the macOS shell-detection path (POSIX shells, login+interactive spawn) is shared code and likely mostly works.
 
 ---
 

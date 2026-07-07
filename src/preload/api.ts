@@ -12,6 +12,7 @@ import type {
   TerminalExitEvent,
   TerminalCwdEvent,
   TerminalRenamedEvent,
+  TerminalAttentionEvent,
 } from "@renderer/type/terminal";
 import type { PromptEntry } from "@renderer/type/prompt";
 
@@ -24,6 +25,9 @@ const terminal: TerminalAPI = {
   clear: (terminalId) => ipcRenderer.invoke("terminal:clear", { terminalId }),
   listShells: () => ipcRenderer.invoke("terminal:listShells"),
   openCwdInExplorer: (terminalId) => ipcRenderer.invoke("terminal:openCwdInExplorer", { terminalId }),
+  setIdleThreshold: (ms) => ipcRenderer.invoke("terminal:setIdleThreshold", { ms }),
+  setIdleDetectionEnabled: (terminalId, enabled) =>
+    ipcRenderer.invoke("terminal:setIdleDetectionEnabled", { terminalId, enabled }),
 
   onData: (callback: (event: TerminalDataEvent) => void) => {
     const handler = (_: unknown, data: TerminalDataEvent) => callback(data);
@@ -47,6 +51,12 @@ const terminal: TerminalAPI = {
     const handler = (_: unknown, data: TerminalRenamedEvent) => callback(data);
     ipcRenderer.on("terminal:renamed", handler);
     return () => ipcRenderer.removeListener("terminal:renamed", handler);
+  },
+
+  onAttention: (callback: (event: TerminalAttentionEvent) => void) => {
+    const handler = (_: unknown, data: TerminalAttentionEvent) => callback(data);
+    ipcRenderer.on("terminal:attention", handler);
+    return () => ipcRenderer.removeListener("terminal:attention", handler);
   },
 };
 
@@ -101,6 +111,7 @@ const dialog: DialogAPI = {
 
 export function exposeAPI(): void {
   contextBridge.exposeInMainWorld("api", {
+    platform: process.platform,
     terminal,
     prompt,
     workspace,

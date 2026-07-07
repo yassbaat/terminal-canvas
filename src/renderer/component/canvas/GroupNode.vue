@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { useVueFlow } from "@vue-flow/core";
 import type { Group } from "@renderer/type/workspace";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useTerminalStore } from "@renderer/store/terminal";
@@ -15,7 +14,17 @@ const props = defineProps<{
 
 const workspaceStore = useWorkspaceStore();
 const terminalStore = useTerminalStore();
-useVueFlow();
+
+const GROUP_COLORS = [
+  "#e94560",
+  "#4ecca3",
+  "#64b5f6",
+  "#f9a825",
+  "#e040fb",
+  "#4dd0e1",
+  "#ab47bc",
+  "#ff8a65",
+];
 
 // Local collapsed state (synced with workspace data)
 const isCollapsed = ref(props.data.group.collapsed);
@@ -54,6 +63,22 @@ function toggleCollapse(): void {
  */
 function removeTerminal(terminalId: string): void {
   workspaceStore.removeTerminalFromGroup(terminalId, props.id);
+}
+
+/**
+ * Ungroup: dissolve this group without killing the terminals inside.
+ */
+function ungroup(): void {
+  workspaceStore.removeGroup(props.id);
+}
+
+/**
+ * Cycle to the next color in the palette.
+ */
+function cycleColor(): void {
+  const current = GROUP_COLORS.indexOf(props.data.group.color || "");
+  const next = GROUP_COLORS[(current + 1) % GROUP_COLORS.length];
+  workspaceStore.updateGroup(props.id, { color: next });
 }
 
 /**
@@ -97,7 +122,12 @@ watch(
   >
     <!-- Group header: name, count, collapse toggle -->
     <div class="group-header" :style="{ borderColor: data.group.color }">
-      <span class="group-color-indicator" :style="{ background: data.group.color || 'transparent' }" />
+      <button
+        class="group-color-indicator"
+        title="Change group color"
+        :style="{ background: data.group.color || 'transparent' }"
+        @click.stop="cycleColor"
+      />
       <span class="group-name" :title="data.group.name">{{ data.group.name }}</span>
       <span class="group-count">{{ terminalCount }}</span>
       <button
@@ -106,6 +136,13 @@ watch(
         @click.stop="toggleCollapse"
       >
         {{ isCollapsed ? "+" : "&#8722;" }}
+      </button>
+      <button
+        class="group-collapse-btn group-ungroup-btn"
+        title="Ungroup (terminals are kept)"
+        @click.stop="ungroup"
+      >
+        &#215;
       </button>
     </div>
 
@@ -147,7 +184,7 @@ watch(
 .group-node {
   border: 2px dashed var(--tc-border-color);
   border-radius: var(--tc-border-radius);
-  background: rgba(30, 30, 47, 0.3);
+  background: var(--tc-group-bg);
   min-width: 200px;
   min-height: 44px;
   transition: all var(--tc-transition-normal);
@@ -157,7 +194,7 @@ watch(
 .group-node.selected {
   border-color: var(--tc-accent);
   border-style: solid;
-  background: rgba(233, 69, 96, 0.05);
+  background: var(--tc-group-selected-bg);
 }
 
 .group-node.collapsed {
@@ -183,6 +220,15 @@ watch(
   border-radius: 50%;
   flex-shrink: 0;
   opacity: 0.8;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  transition: transform var(--tc-transition-fast);
+}
+
+.group-color-indicator:hover {
+  opacity: 1;
+  transform: scale(1.3);
 }
 
 .group-name {

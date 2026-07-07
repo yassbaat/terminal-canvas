@@ -3,6 +3,7 @@ import { ref, onMounted } from "vue";
 import { toRaw } from "vue";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
+import { useUIStore } from "@renderer/store/ui";
 import type { GroqSettings } from "@renderer/type/groq";
 
 const props = defineProps<{
@@ -15,6 +16,7 @@ const emit = defineEmits<{
 
 const terminalStore = useTerminalStore();
 const workspaceStore = useWorkspaceStore();
+const uiStore = useUIStore();
 
 const activeTab = ref<"general" | "groq" | "system">("general");
 
@@ -36,6 +38,7 @@ const groqTestResult = ref<string | null>(null);
 // System integration
 const contextMenuRegistered = ref(false);
 const contextMenuLoading = ref(false);
+const isWindows = window.api?.platform === "win32";
 
 onMounted(async () => {
   // Load groq settings
@@ -185,6 +188,45 @@ async function toggleContextMenu() {
               Used when creating quick terminals and during onboarding.
             </span>
           </div>
+
+          <div class="form-group">
+            <label>Attention Notifications</label>
+            <span class="form-hint">
+              Flags a terminal (canvas badge, layer badge, and the bell
+              counter in the toolbar) when it's been busy for a while and
+              then goes quiet, or when it rings the terminal bell -- the
+              usual signal that a command or coding agent has finished.
+            </span>
+            <label class="form-checkbox" style="margin-top: 6px;">
+              <input
+                :checked="!uiStore.soundMuted"
+                type="checkbox"
+                @change="uiStore.setSoundMuted(!($event.target as HTMLInputElement).checked)"
+              />
+              <span>Play a sound</span>
+            </label>
+            <div class="form-row" style="margin-top: 6px;">
+              <div class="form-group">
+                <label>Notify after running for at least</label>
+                <div class="cwd-input-row">
+                  <input
+                    :value="uiStore.idleThresholdSeconds"
+                    class="tc-input"
+                    type="number"
+                    min="0"
+                    step="1"
+                    style="max-width: 90px;"
+                    @change="uiStore.setIdleThresholdSeconds(Number(($event.target as HTMLInputElement).value))"
+                  />
+                  <span class="form-hint">seconds</span>
+                </div>
+                <span class="form-hint">
+                  Quick commands (like `ls`) never notify; only genuinely
+                  long-running ones do. Set to 0 to notify on every command.
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Groq Tab -->
@@ -259,7 +301,7 @@ async function toggleContextMenu() {
 
         <!-- System Integration Tab -->
         <div v-if="activeTab === 'system'" class="tab-panel">
-          <div class="system-section">
+          <div v-if="isWindows" class="system-section">
             <h4 class="system-heading">Windows Explorer Context Menu</h4>
             <p class="system-desc">
               Add "Open in Terminal Canvas" to your right-click menu in Windows
@@ -285,6 +327,14 @@ async function toggleContextMenu() {
                   ? "Remove from Context Menu"
                   : "Add to Context Menu" }}
             </button>
+          </div>
+          <div v-else class="system-section">
+            <h4 class="system-heading">Finder Integration</h4>
+            <p class="system-desc">
+              Right-click-to-open-here integration is currently only available
+              on Windows (Explorer context menu). On macOS, use the "Open"
+              button in the toolbar or drag a folder onto the canvas.
+            </p>
           </div>
         </div>
       </div>
@@ -481,13 +531,13 @@ async function toggleContextMenu() {
 }
 
 .test-result.success {
-  background: rgba(78, 204, 163, 0.1);
+  background: var(--tc-success-soft);
   color: var(--tc-success);
   border: 1px solid rgba(78, 204, 163, 0.2);
 }
 
 .test-result.error {
-  background: rgba(233, 69, 96, 0.1);
+  background: var(--tc-accent-soft);
   color: var(--tc-error);
   border: 1px solid rgba(233, 69, 96, 0.2);
 }

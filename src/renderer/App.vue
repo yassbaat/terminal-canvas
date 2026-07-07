@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { usePromptStore } from "@renderer/store/prompt";
 import { useWorkspaceStore } from "@renderer/store/workspace";
@@ -18,6 +18,18 @@ const terminalStore = useTerminalStore();
 const promptStore = usePromptStore();
 const workspaceStore = useWorkspaceStore();
 const uiStore = useUIStore();
+
+// Keep <html data-theme="..."> in sync with the resolved theme. The initial
+// value is already applied synchronously by the inline script in
+// index.html (avoids a flash) -- this watcher only handles later changes:
+// the user toggling it, or the OS preference flipping while running.
+watch(
+  () => uiStore.resolvedTheme,
+  (theme) => {
+    document.documentElement.setAttribute("data-theme", theme);
+  },
+  { immediate: true }
+);
 
 /**
  * Global keyboard shortcuts handler.
@@ -44,8 +56,11 @@ function handleKeyDown(e: KeyboardEvent): void {
     return;
   }
 
+  // Accept both Ctrl (Windows/Linux) and Cmd (macOS) as the modifier key
+  const mod = e.ctrlKey || e.metaKey;
+
   // Ctrl+N: New terminal (use default if set, otherwise open dialog)
-  if (e.key === "n" && e.ctrlKey && !e.shiftKey) {
+  if (e.key === "n" && mod && !e.shiftKey) {
     const shellId =
       terminalStore.sessionDefaultShellId ||
       workspaceStore.settings.defaultShellId;
@@ -60,7 +75,7 @@ function handleKeyDown(e: KeyboardEvent): void {
   }
 
   // Ctrl+S: Save workspace
-  if (e.key === "s" && e.ctrlKey && !e.shiftKey) {
+  if (e.key === "s" && mod && !e.shiftKey) {
     workspaceStore.saveCurrentWorkspace();
     uiStore.showToast("Workspace saved");
     e.preventDefault();
@@ -68,14 +83,14 @@ function handleKeyDown(e: KeyboardEvent): void {
   }
 
   // Ctrl+Shift+P: Command palette
-  if (e.key === "P" && e.ctrlKey && e.shiftKey) {
+  if ((e.key === "P" || e.key === "p") && mod && e.shiftKey) {
     uiStore.toggleCommandPalette();
     e.preventDefault();
     return;
   }
 
   // Ctrl+G: Group selected terminals
-  if (e.key === "g" && e.ctrlKey && !e.shiftKey) {
+  if (e.key === "g" && mod && !e.shiftKey) {
     workspaceStore.groupSelectedTerminals().then((group: { terminalIds: string[] } | null) => {
       if (group) {
         uiStore.showToast(`Grouped ${group.terminalIds.length} terminal(s)`);
@@ -87,24 +102,10 @@ function handleKeyDown(e: KeyboardEvent): void {
     return;
   }
 
-  // Ctrl+Plus / Ctrl+Minus: Zoom in/out (let Vue Flow handle these natively)
-  // Ctrl+0: Reset zoom
-
-  // Delete / Backspace: Remove selected terminals and their edges
-  if ((e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey) {
-    const selected = Array.from(terminalStore.selectedTerminalIds);
-    if (selected.length > 0) {
-      for (const id of selected) {
-        terminalStore.killSession(id);
-        terminalStore.removeSession(id);
-        workspaceStore.removeEdgesForTerminal(id);
-      }
-      terminalStore.clearSelection();
-      uiStore.showToast(`Removed ${selected.length} terminal(s)`);
-    }
-    e.preventDefault();
-    return;
-  }
+  // Ctrl/Cmd + Plus/Minus/0 (zoom) and Delete/Backspace (remove selection)
+  // are handled by WorkspaceCanvas so there's a single source of truth for
+  // canvas-scoped shortcuts and selected terminals/notes/groups aren't
+  // processed twice by two separate window-level listeners.
 }
 
 // Register "Open in Terminal Canvas" listener immediately so we don't miss early events
@@ -186,6 +187,9 @@ onMounted(() => {
     promptStore.setupListeners();
     // Load available shells from the system
     terminalStore.loadShells();
+    // Main process's idle-threshold defaults fresh each launch; push the
+    // persisted preference (if the user has changed it before) to match.
+    window.api.terminal.setIdleThreshold(uiStore.idleThresholdSeconds * 1000).catch(() => {});
   }
 
   // Create a fresh workspace

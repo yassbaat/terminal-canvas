@@ -26,4 +26,7 @@ export interface ActiveTerminal {
   shellConfig: ShellConfig;
   spawnOptions: SpawnOptions;
   promptHistory: string[];
+  /** Idle/attention detection bookkeeping (see terminal-manager.ts). */
+  busyStartedAt: number | null;
+  quietTimer: ReturnType<typeof setTimeout> | null;
 }

@@ -255,13 +255,13 @@ function close() {
 }
 
 .test-result.success {
-  background: rgba(78, 204, 163, 0.1);
+  background: var(--tc-success-soft);
   color: var(--tc-success);
   border: 1px solid rgba(78, 204, 163, 0.2);
 }
 
 .test-result.error {
-  background: rgba(233, 69, 96, 0.1);
+  background: var(--tc-accent-soft);
   color: var(--tc-error);
   border: 1px solid rgba(233, 69, 96, 0.2);
 }

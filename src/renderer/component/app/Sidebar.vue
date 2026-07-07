@@ -67,7 +67,10 @@ function handleLayerClick(
       workspaceStore.clearNoteSelection();
       workspaceStore.clearGroupSelection();
     }
-    terminalStore.setFocused(id);
+    // Note: deliberately NOT calling terminalStore.setFocused(id) here.
+    // Selecting a terminal from the Layers list is for highlighting/grouping
+    // (e.g. select several, then Ctrl+G) -- it must not steal keyboard focus
+    // into that terminal, which would silently disable canvas shortcuts.
   } else if (type === "note") {
     if (isMulti) {
       workspaceStore.toggleNoteSelected(id);
@@ -141,6 +144,7 @@ function handleLayerClick(
             <div class="layer-row">
               <span class="layer-status-dot" :class="terminalStore.sessions.get(tid)?.status" />
               <span class="layer-name">{{ terminalStore.sessions.get(tid)?.name ?? tid }}</span>
+              <span v-if="terminalStore.sessions.get(tid)?.needsAttention" class="layer-attention" title="Needs attention">&#128276;</span>
             </div>
           </div>
         </div>
@@ -159,6 +163,7 @@ function handleLayerClick(
           <div class="layer-row">
             <span class="layer-status-dot" :class="`status-${session.status}`" />
             <span class="layer-name">{{ session.name }}</span>
+            <span v-if="session.needsAttention" class="layer-attention" title="Needs attention">&#128276;</span>
             <button class="layer-kill" @click.stop="killTerminal(session.id)" title="Kill">
               &times;
             </button>
@@ -390,6 +395,19 @@ function handleLayerClick(
   text-overflow: ellipsis;
 }
 
+/* Attention badge (idle/bell notification) */
+.layer-attention {
+  font-size: 11px;
+  line-height: 1;
+  flex-shrink: 0;
+  filter: grayscale(0) saturate(1.4);
+}
+
+.layer-item.terminal-layer:has(.layer-attention) {
+  background: var(--tc-warning-soft);
+  border-color: var(--tc-warning);
+}
+
 /* Kill button */
 .layer-kill {
   width: 18px;
@@ -413,7 +431,7 @@ function handleLayerClick(
 }
 
 .layer-kill:hover {
-  background: rgba(233, 69, 96, 0.15);
+  background: var(--tc-accent-soft);
   color: var(--tc-error);
 }
 

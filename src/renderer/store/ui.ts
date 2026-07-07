@@ -1,8 +1,14 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { ref, computed, onScopeDispose } from "vue";
 
 export type InspectorTab = "terminal" | "prompt" | "settings";
 export type SidebarTab = "layers" | "workspaces";
+export type ThemePreference = "light" | "dark" | "system";
+
+const THEME_STORAGE_KEY = "terminal-canvas:theme";
+const SOUND_MUTED_KEY = "terminal-canvas:sound-muted";
+const IDLE_THRESHOLD_KEY = "terminal-canvas:idle-threshold-seconds";
+const DEFAULT_IDLE_THRESHOLD_SECONDS = 2;
 
 /**
  * Pinia store for UI state management.
@@ -14,6 +20,87 @@ export const useUIStore = defineStore("ui", () => {
   const inspectorTab = ref<InspectorTab>("terminal");
   const sidebarVisible = ref(true);
   const sidebarTab = ref<SidebarTab>("layers");
+
+  // ─── Theme ───────────────────────────────────────────────────────
+  const storedThemePref = localStorage.getItem(THEME_STORAGE_KEY);
+  const themePreference = ref<ThemePreference>(
+    storedThemePref === "light" || storedThemePref === "dark" || storedThemePref === "system"
+      ? storedThemePref
+      : "dark"
+  );
+  const systemPrefersDark = ref(
+    typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+      : true
+  );
+
+  if (typeof window.matchMedia === "function") {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e: MediaQueryListEvent) => {
+      systemPrefersDark.value = e.matches;
+    };
+    media.addEventListener("change", handler);
+    onScopeDispose(() => media.removeEventListener("change", handler));
+  }
+
+  /** The theme actually applied to the document, resolving "system". */
+  const resolvedTheme = computed<"light" | "dark">(() =>
+    themePreference.value === "system"
+      ? systemPrefersDark.value
+        ? "dark"
+        : "light"
+      : themePreference.value
+  );
+
+  /**
+   * Set the theme preference and persist it. Applying `resolvedTheme` to
+   * the document is handled by a watcher in App.vue (single source of truth
+   * for the DOM side-effect).
+   */
+  function setThemePreference(pref: ThemePreference): void {
+    themePreference.value = pref;
+    localStorage.setItem(THEME_STORAGE_KEY, pref);
+  }
+
+  /** Cycle Dark -> Light -> System -> Dark, for a single toolbar toggle button. */
+  function cycleTheme(): void {
+    const order: ThemePreference[] = ["dark", "light", "system"];
+    const next = order[(order.indexOf(themePreference.value) + 1) % order.length];
+    setThemePreference(next);
+  }
+
+  // ─── Attention Notifications (idle/bell detection) ────────────────
+  const soundMuted = ref(localStorage.getItem(SOUND_MUTED_KEY) === "true");
+  // Note: Number(null) is 0, not NaN -- a missing key must be checked for
+  // explicitly, or every first-run user silently gets threshold=0 (notify
+  // on every command) instead of the intended default.
+  const rawStoredThreshold = localStorage.getItem(IDLE_THRESHOLD_KEY);
+  const storedThreshold = rawStoredThreshold === null ? NaN : Number(rawStoredThreshold);
+  const idleThresholdSeconds = ref(
+    Number.isFinite(storedThreshold) && storedThreshold >= 0
+      ? storedThreshold
+      : DEFAULT_IDLE_THRESHOLD_SECONDS
+  );
+
+  function setSoundMuted(muted: boolean): void {
+    soundMuted.value = muted;
+    localStorage.setItem(SOUND_MUTED_KEY, String(muted));
+  }
+
+  function toggleSoundMuted(): void {
+    setSoundMuted(!soundMuted.value);
+  }
+
+  /** Persists locally and pushes the new value to the main process, which
+   * owns the actual idle-timer logic. */
+  function setIdleThresholdSeconds(seconds: number): void {
+    const clamped = Math.max(0, seconds);
+    idleThresholdSeconds.value = clamped;
+    localStorage.setItem(IDLE_THRESHOLD_KEY, String(clamped));
+    window.api?.terminal.setIdleThreshold(clamped * 1000)?.catch(() => {
+      // Non-critical -- main process keeps its previous threshold.
+    });
+  }
 
   // ─── Dialog State ────────────────────────────────────────────────
   const commandPaletteOpen = ref(false);
@@ -173,7 +260,16 @@ export const useUIStore = defineStore("ui", () => {
     settingsOpen,
     onboardingOpen,
     toastMessage,
+    themePreference,
+    resolvedTheme,
+    soundMuted,
+    idleThresholdSeconds,
     // Actions
+    setThemePreference,
+    cycleTheme,
+    setSoundMuted,
+    toggleSoundMuted,
+    setIdleThresholdSeconds,
     toggleInspector,
     setInspectorTab,
     toggleSidebar,
