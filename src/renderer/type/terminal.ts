@@ -1,3 +1,5 @@
+import type { KnownAgentId } from "@renderer/util/agents";
+
 export interface TerminalNodeData {
   x: number;
   y: number;
@@ -55,6 +57,8 @@ export interface TerminalSession {
   attentionReason: AttentionReason | null;
   /** "Off duty" terminals are excluded from idle/bell attention detection. */
   idleDetectionEnabled: boolean;
+  /** Best-effort guess at which coding-agent CLI is running in the foreground, if any. */
+  activeAgent: KnownAgentId | null;
 }
 
 export interface ShellInfo {
@@ -72,6 +76,8 @@ export interface CreateTerminalOptions {
   cwd?: string;
   name?: string;
   id?: string;
+  width?: number;
+  height?: number;
 }
 
 export interface TerminalWriteOptions {
@@ -113,6 +119,10 @@ export interface TerminalRenamedEvent {
 export interface TerminalAttentionEvent {
   terminalId: string;
   reason: AttentionReason;
+}
+
+export interface TerminalReadyEvent {
+  terminalId: string;
 }
 
 export interface TerminalNodeProps {

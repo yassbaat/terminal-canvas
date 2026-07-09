@@ -4,18 +4,17 @@ import {
   unregisterContextMenu,
   isContextMenuRegistered,
 } from "../shell/context-menu";
+import {
+  registerFinderQuickAction,
+  unregisterFinderQuickAction,
+  isFinderQuickActionRegistered,
+} from "../shell/finder-quick-action";
 import { createLogger } from "../util/logger";
 
 const logger = createLogger("ShellIPC");
 
 export function registerShellIPC(): void {
   ipcMain.handle("shell:registerContextMenu", async () => {
-    if (process.platform !== "win32") {
-      return {
-        success: false,
-        error: "The Explorer context menu integration is only available on Windows.",
-      };
-    }
     if (!app.isPackaged) {
       return {
         success: false,
@@ -23,7 +22,16 @@ export function registerShellIPC(): void {
       };
     }
     try {
-      registerContextMenu();
+      if (process.platform === "win32") {
+        registerContextMenu();
+      } else if (process.platform === "darwin") {
+        registerFinderQuickAction();
+      } else {
+        return {
+          success: false,
+          error: "Right-click integration is only available on Windows and macOS.",
+        };
+      }
       return { success: true };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -33,11 +41,12 @@ export function registerShellIPC(): void {
   });
 
   ipcMain.handle("shell:unregisterContextMenu", async () => {
-    if (process.platform !== "win32") {
-      return { success: true };
-    }
     try {
-      unregisterContextMenu();
+      if (process.platform === "win32") {
+        unregisterContextMenu();
+      } else if (process.platform === "darwin") {
+        unregisterFinderQuickAction();
+      }
       return { success: true };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -47,11 +56,14 @@ export function registerShellIPC(): void {
   });
 
   ipcMain.handle("shell:isContextMenuRegistered", async () => {
-    if (process.platform !== "win32") {
-      return false;
-    }
     try {
-      return isContextMenuRegistered();
+      if (process.platform === "win32") {
+        return isContextMenuRegistered();
+      }
+      if (process.platform === "darwin") {
+        return isFinderQuickActionRegistered();
+      }
+      return false;
     } catch (error) {
       logger.error("IPC: shell:isContextMenuRegistered failed", error);
       return false;

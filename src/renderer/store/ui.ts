@@ -4,11 +4,22 @@ import { ref, computed, onScopeDispose } from "vue";
 export type InspectorTab = "terminal" | "prompt" | "settings";
 export type SidebarTab = "layers" | "workspaces";
 export type ThemePreference = "light" | "dark" | "system";
+export type TerminalHeaderStyle = "comfortable" | "compact" | "minimal";
 
 const THEME_STORAGE_KEY = "terminal-canvas:theme";
 const SOUND_MUTED_KEY = "terminal-canvas:sound-muted";
 const IDLE_THRESHOLD_KEY = "terminal-canvas:idle-threshold-seconds";
 const DEFAULT_IDLE_THRESHOLD_SECONDS = 2;
+const SIDEBAR_WIDTH_KEY = "terminal-canvas:sidebar-width";
+const INSPECTOR_WIDTH_KEY = "terminal-canvas:inspector-width";
+const MEMORY_RAIL_WIDTH_KEY = "terminal-canvas:memory-rail-width";
+const HEADER_STYLE_KEY = "terminal-canvas:terminal-header-style";
+
+function readStoredWidth(key: string, fallback: number): number {
+  const raw = localStorage.getItem(key);
+  const n = raw === null ? NaN : Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
 
 /**
  * Pinia store for UI state management.
@@ -20,6 +31,39 @@ export const useUIStore = defineStore("ui", () => {
   const inspectorTab = ref<InspectorTab>("terminal");
   const sidebarVisible = ref(true);
   const sidebarTab = ref<SidebarTab>("layers");
+
+  // ─── Resizable Panel Widths ──────────────────────────────────────
+  const sidebarWidth = ref(readStoredWidth(SIDEBAR_WIDTH_KEY, 220));
+  const inspectorWidth = ref(readStoredWidth(INSPECTOR_WIDTH_KEY, 280));
+  const memoryRailWidth = ref(readStoredWidth(MEMORY_RAIL_WIDTH_KEY, 220));
+
+  function setSidebarWidth(width: number): void {
+    sidebarWidth.value = Math.min(480, Math.max(160, width));
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth.value));
+  }
+
+  function setInspectorWidth(width: number): void {
+    inspectorWidth.value = Math.min(480, Math.max(200, width));
+    localStorage.setItem(INSPECTOR_WIDTH_KEY, String(inspectorWidth.value));
+  }
+
+  function setMemoryRailWidth(width: number): void {
+    memoryRailWidth.value = Math.min(480, Math.max(160, width));
+    localStorage.setItem(MEMORY_RAIL_WIDTH_KEY, String(memoryRailWidth.value));
+  }
+
+  // ─── Terminal Header Style ───────────────────────────────────────
+  const storedHeaderStyle = localStorage.getItem(HEADER_STYLE_KEY);
+  const headerStyle = ref<TerminalHeaderStyle>(
+    storedHeaderStyle === "comfortable" || storedHeaderStyle === "compact" || storedHeaderStyle === "minimal"
+      ? storedHeaderStyle
+      : "comfortable"
+  );
+
+  function setHeaderStyle(style: TerminalHeaderStyle): void {
+    headerStyle.value = style;
+    localStorage.setItem(HEADER_STYLE_KEY, style);
+  }
 
   // ─── Theme ───────────────────────────────────────────────────────
   const storedThemePref = localStorage.getItem(THEME_STORAGE_KEY);
@@ -102,6 +146,19 @@ export const useUIStore = defineStore("ui", () => {
     });
   }
 
+  // ─── Home / Launcher Screen ──────────────────────────────────────
+  // Whole-window takeover shown instead of the toolbar/canvas/sidebar when
+  // the user has saved workspaces to pick from (see App.vue's onMounted).
+  const homeVisible = ref(false);
+
+  function showHome(): void {
+    homeVisible.value = true;
+  }
+
+  function hideHome(): void {
+    homeVisible.value = false;
+  }
+
   // ─── Dialog State ────────────────────────────────────────────────
   const commandPaletteOpen = ref(false);
   const newTerminalDialogOpen = ref(false);
@@ -112,6 +169,13 @@ export const useUIStore = defineStore("ui", () => {
   // ─── Toast ───────────────────────────────────────────────────────
   const toastMessage = ref<string | null>(null);
   const toastTimeout = ref<ReturnType<typeof setTimeout> | null>(null);
+
+  // ─── Canvas Pan Mode ─────────────────────────────────────────────
+  // Whether the pan modifier (Shift/Space) is currently held. Lives here
+  // (rather than as a local ref in WorkspaceCanvas.vue) so other components
+  // that need to yield to a pan gesture -- e.g. XtermView.vue deciding
+  // whether to stop propagation on mousedown -- can read it too.
+  const isPanKeyPressed = ref(false);
 
   // ─── Actions ─────────────────────────────────────────────────────
 
@@ -254,6 +318,12 @@ export const useUIStore = defineStore("ui", () => {
     inspectorTab,
     sidebarVisible,
     sidebarTab,
+    sidebarWidth,
+    inspectorWidth,
+    memoryRailWidth,
+    headerStyle,
+    homeVisible,
+    isPanKeyPressed,
     commandPaletteOpen,
     newTerminalDialogOpen,
     groqSettingsOpen,
@@ -274,6 +344,12 @@ export const useUIStore = defineStore("ui", () => {
     setInspectorTab,
     toggleSidebar,
     setSidebarTab,
+    setSidebarWidth,
+    setInspectorWidth,
+    setMemoryRailWidth,
+    setHeaderStyle,
+    showHome,
+    hideHome,
     openCommandPalette,
     closeCommandPalette,
     toggleCommandPalette,

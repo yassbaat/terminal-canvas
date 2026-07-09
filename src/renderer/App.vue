@@ -8,6 +8,7 @@ import Toolbar from "@renderer/component/app/Toolbar.vue";
 import Statusbar from "@renderer/component/app/Statusbar.vue";
 import Sidebar from "@renderer/component/app/Sidebar.vue";
 import Inspector from "@renderer/component/app/Inspector.vue";
+import HomeView from "@renderer/component/app/HomeView.vue";
 import WorkspaceCanvas from "@renderer/component/canvas/WorkspaceCanvas.vue";
 import NewTerminalDialog from "@renderer/component/dialog/NewTerminalDialog.vue";
 import SettingsDialog from "@renderer/component/dialog/SettingsDialog.vue";
@@ -192,8 +193,18 @@ onMounted(() => {
     window.api.terminal.setIdleThreshold(uiStore.idleThresholdSeconds * 1000).catch(() => {});
   }
 
-  // Create a fresh workspace
-  workspaceStore.createNewWorkspace();
+  // Show a home/launcher screen listing saved workspaces to pick from --
+  // previously the app *always* silently created a fresh workspace on
+  // launch and workspaceList was never even fetched, so saved workspaces
+  // were completely unreachable from the UI. Only skip straight to a new
+  // workspace when there's truly nothing saved yet (first run).
+  workspaceStore.loadWorkspaceList().then(() => {
+    if (workspaceStore.workspaceList.length > 0) {
+      uiStore.showHome();
+    } else {
+      workspaceStore.createNewWorkspace();
+    }
+  });
 
   // Show onboarding on first run
   const hasOnboarded = localStorage.getItem("terminal-canvas:onboarded") === "true";
@@ -223,20 +234,31 @@ onUnmounted(() => {
 
 <template>
   <div class="app-root">
-    <!-- Top toolbar -->
-    <Toolbar class="app-toolbar" />
+    <HomeView v-if="uiStore.homeVisible" />
+    <template v-else>
+      <!-- Top toolbar -->
+      <Toolbar class="app-toolbar" />
 
-    <!-- Main body: sidebar + canvas + inspector -->
-    <div class="app-body">
-      <Sidebar v-show="uiStore.sidebarVisible" class="app-sidebar" />
-      <div class="app-canvas-area">
-        <WorkspaceCanvas class="app-canvas" />
+      <!-- Main body: sidebar + canvas + inspector -->
+      <div class="app-body">
+        <Sidebar
+          v-show="uiStore.sidebarVisible"
+          class="app-sidebar"
+          :style="{ width: uiStore.sidebarWidth + 'px' }"
+        />
+        <div class="app-canvas-area">
+          <WorkspaceCanvas class="app-canvas" />
+        </div>
+        <Inspector
+          v-show="uiStore.inspectorVisible"
+          class="app-inspector"
+          :style="{ width: uiStore.inspectorWidth + 'px' }"
+        />
       </div>
-      <Inspector v-show="uiStore.inspectorVisible" class="app-inspector" />
-    </div>
 
-    <!-- Bottom status bar -->
-    <Statusbar class="app-statusbar" />
+      <!-- Bottom status bar -->
+      <Statusbar class="app-statusbar" />
+    </template>
 
     <!-- Dialogs -->
     <NewTerminalDialog v-model:open="uiStore.newTerminalDialogOpen" />
@@ -277,9 +299,9 @@ onUnmounted(() => {
 }
 
 .app-sidebar {
-  width: 220px;
   flex-shrink: 0;
   z-index: var(--tc-z-sidebar);
+  position: relative;
 }
 
 .app-canvas-area {
@@ -295,9 +317,9 @@ onUnmounted(() => {
 }
 
 .app-inspector {
-  width: 280px;
   flex-shrink: 0;
   z-index: var(--tc-z-inspector);
+  position: relative;
 }
 
 .app-statusbar {

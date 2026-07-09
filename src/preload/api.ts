@@ -13,6 +13,7 @@ import type {
   TerminalCwdEvent,
   TerminalRenamedEvent,
   TerminalAttentionEvent,
+  TerminalReadyEvent,
 } from "@renderer/type/terminal";
 import type { PromptEntry } from "@renderer/type/prompt";
 
@@ -58,6 +59,12 @@ const terminal: TerminalAPI = {
     ipcRenderer.on("terminal:attention", handler);
     return () => ipcRenderer.removeListener("terminal:attention", handler);
   },
+
+  onReady: (callback: (event: TerminalReadyEvent) => void) => {
+    const handler = (_: unknown, data: TerminalReadyEvent) => callback(data);
+    ipcRenderer.on("terminal:ready", handler);
+    return () => ipcRenderer.removeListener("terminal:ready", handler);
+  },
 };
 
 const prompt: PromptAPI = {
@@ -79,6 +86,7 @@ const workspace: WorkspaceAPI = {
   load: (workspaceId) => ipcRenderer.invoke("workspace:load", { workspaceId }),
   list: () => ipcRenderer.invoke("workspace:list"),
   delete: (workspaceId) => ipcRenderer.invoke("workspace:delete", { workspaceId }),
+  rename: (workspaceId, name) => ipcRenderer.invoke("workspace:rename", { workspaceId, name }),
   updateViewport: (x, y, zoom) => ipcRenderer.invoke("workspace:updateViewport", { x, y, zoom }),
 };
 

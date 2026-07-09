@@ -2,6 +2,9 @@
 import { ref, onMounted, watch } from "vue";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
+import { useLaunchProfileStore } from "@renderer/store/launchProfile";
+import { useUIStore } from "@renderer/store/ui";
+import { X } from "lucide-vue-next";
 
 const props = defineProps<{
   open: boolean;
@@ -13,11 +16,14 @@ const emit = defineEmits<{
 
 const terminalStore = useTerminalStore();
 const workspaceStore = useWorkspaceStore();
+const launchProfileStore = useLaunchProfileStore();
+const uiStore = useUIStore();
 const selectedShellId = ref("");
 const customCwd = ref("");
 const name = ref("");
 const rememberForSession = ref(false);
 const rememberAlways = ref(false);
+const selectedProfileId = ref("plain-shell");
 
 // Auto-select first shell when shells load or dialog opens
 watch(
@@ -55,14 +61,22 @@ async function create() {
     workspaceStore.updateSettings({ defaultShellId: selectedShellId.value });
   }
 
+  const profile = launchProfileStore.getProfile(selectedProfileId.value);
+
   await terminalStore.createSession({
     shellId: selectedShellId.value,
     cols: 80,
     rows: 24,
     cwd: customCwd.value || undefined,
     name: name.value || undefined,
+    autoRunCommand: profile?.command || undefined,
   });
   close();
+}
+
+function openLaunchProfileSettings() {
+  close();
+  uiStore.openSettings();
 }
 
 async function browseCwd() {
@@ -82,6 +96,7 @@ function close() {
   name.value = "";
   rememberForSession.value = false;
   rememberAlways.value = false;
+  selectedProfileId.value = "plain-shell";
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -104,7 +119,7 @@ function onKeydown(event: KeyboardEvent) {
     <div class="dialog" @click.stop>
       <div class="dialog-header">
         <h3>New Terminal</h3>
-        <button class="dialog-close" @click="close">&#215;</button>
+        <button class="dialog-close" @click="close"><X :size="16" /></button>
       </div>
 
       <div class="dialog-body">
@@ -121,6 +136,28 @@ function onKeydown(event: KeyboardEvent) {
               {{ shell.name }}
             </button>
           </div>
+        </div>
+
+        <div class="form-group">
+          <label>Launch (optional)</label>
+          <div class="profile-options">
+            <button
+              v-for="profile in launchProfileStore.allProfiles"
+              :key="profile.id"
+              class="profile-option"
+              :class="{ active: selectedProfileId === profile.id }"
+              :style="selectedProfileId === profile.id ? { borderColor: profile.color, color: profile.color } : {}"
+              :title="profile.command ? `Runs '${profile.command}' automatically once the shell is ready` : 'Plain shell, nothing auto-run'"
+              @click="selectedProfileId = profile.id"
+            >
+              <component :is="profile.icon" class="profile-glyph" :size="13" :style="{ color: profile.color }" />
+              {{ profile.label }}
+            </button>
+          </div>
+          <span class="form-hint">
+            Auto-types and submits the command once the shell is ready.
+            <a href="#" class="manage-profiles-link" @click.prevent="openLaunchProfileSettings">Manage providers &amp; commands</a>
+          </span>
         </div>
 
         <div class="form-group">
@@ -277,6 +314,51 @@ function onKeydown(event: KeyboardEvent) {
   border-color: var(--tc-accent);
   background: var(--tc-accent-soft);
   color: var(--tc-accent);
+}
+
+.profile-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.profile-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--tc-border-color);
+  border-radius: var(--tc-border-radius-sm);
+  background: var(--tc-bg-secondary);
+  color: var(--tc-text-secondary);
+  cursor: pointer;
+  font-size: var(--tc-font-size-sm);
+  transition: all var(--tc-transition-fast);
+  font-family: var(--tc-font-sans);
+}
+
+.profile-option:hover {
+  border-color: var(--tc-border-focus);
+  color: var(--tc-text-primary);
+}
+
+.profile-option.active {
+  background: var(--tc-bg-hover);
+}
+
+.profile-glyph {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.manage-profiles-link {
+  color: var(--tc-accent);
+  text-decoration: none;
+  margin-left: 4px;
+}
+
+.manage-profiles-link:hover {
+  text-decoration: underline;
 }
 
 .tc-input {

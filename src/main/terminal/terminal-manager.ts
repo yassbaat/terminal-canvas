@@ -16,8 +16,13 @@ const logger = createLogger("TerminalManager");
 // "settled" (i.e. the running command/agent turn has finished). This is a
 // fixed implementation detail, distinct from the user-configurable
 // idleThresholdMs below (how long it must have been busy beforehand to be
-// worth notifying about at all).
-const QUIET_MS = 1500;
+// worth notifying about at all). Coding agents commonly pause well over a
+// second between visible output bursts (waiting on a tool call, a web
+// request, extended thinking) while still mid-task, so this needs to be a
+// generous backstop rather than a tight "done typing" window -- the cursor-
+// visibility check below is the primary signal now, this just bounds how
+// long we wait when that signal is unavailable.
+const QUIET_MS = 4000;
 
 export class TerminalManager {
   private terminals = new Map<string, ActiveTerminal>();
@@ -55,6 +60,21 @@ export class TerminalManager {
       active.quietTimer = null;
     }
     active.busyStartedAt = null;
+  }
+
+  /**
+   * Track cursor visibility from \x1b[?25l (hide) / \x1b[?25h (show) codes
+   * seen in this chunk. A chunk can contain several of these (e.g. a
+   * spinner frame hides then re-shows), so take whichever appears last.
+   * This is a suppression-only signal (see the idle timer below): it can
+   * delay/mute a false "idle" flag, but a shell that never emits these
+   * codes just keeps the default (visible) and behaves exactly as before.
+   */
+  private updateCursorVisibility(active: ActiveTerminal, data: string): void {
+    const lastHide = data.lastIndexOf("\x1b[?25l");
+    const lastShow = data.lastIndexOf("\x1b[?25h");
+    if (lastHide === -1 && lastShow === -1) return;
+    active.cursorVisible = lastShow > lastHide;
   }
 
   private flagAttention(id: string, reason: AttentionReason): void {
@@ -147,8 +167,8 @@ export class TerminalManager {
       node: {
         x: defaultX,
         y: defaultY,
-        width: 640,
-        height: 400,
+        width: options.width ?? 640,
+        height: options.height ?? 400,
       },
       naming: {
         enabled: true,
@@ -161,6 +181,7 @@ export class TerminalManager {
       lastAttentionAt: null,
       attentionReason: null,
       idleDetectionEnabled: true,
+      activeAgent: null,
     };
 
     // Set up PTY data handler
@@ -178,6 +199,7 @@ export class TerminalManager {
         if (active.lastOutputChunk.length > 5000) {
           active.lastOutputChunk = active.lastOutputChunk.slice(-5000);
         }
+        this.updateCursorVisibility(active, data);
       }
 
       // Forward data to renderer
@@ -187,6 +209,10 @@ export class TerminalManager {
 
       // Attempt CWD detection from prompt-like output
       this.detectCwdChange(data, session);
+
+      // First shell prompt seen -- safe to inject an auto-run command now
+      // (rc files have finished loading). See checkPromptReady.
+      this.checkPromptReady(data, id);
 
       // Bell (\x07) is an explicit "look at me" signal many CLIs (including
       // coding agents) send on completion -- flag immediately regardless of
@@ -213,7 +239,13 @@ export class TerminalManager {
             : 0;
           stillActive.busyStartedAt = null;
           stillActive.quietTimer = null;
-          if (busyDuration >= this.idleThresholdMs) {
+          // Suppress if the terminal's own UI has the cursor hidden -- a
+          // common convention for "still actively rendering" (spinners,
+          // progress bars, "thinking" indicators) as opposed to idle at an
+          // input prompt (cursor shown). This can only mute a flag, never
+          // cause one: terminals that never touch cursor visibility default
+          // to true and are unaffected.
+          if (busyDuration >= this.idleThresholdMs && stillActive.cursorVisible !== false) {
             this.flagAttention(id, "idle");
           }
         }, QUIET_MS);
@@ -243,6 +275,8 @@ export class TerminalManager {
       promptHistory: [],
       busyStartedAt: null,
       quietTimer: null,
+      promptSeen: false,
+      cursorVisible: true,
     };
 
     this.terminals.set(id, active);
@@ -548,10 +582,44 @@ export class TerminalManager {
   }
 
   /**
+   * Fire terminal:ready exactly once per session, the first time output
+   * looks like a shell prompt (same heuristic as detectCwdChange, but
+   * unconditional on whether the cwd actually changed -- a terminal that
+   * starts in its default directory never trips the cwd-change branch).
+   * This is what gates auto-run commands (see CreateTerminalOptions):
+   * injecting text before the shell has finished loading its rc files
+   * would land in the wrong place or get silently eaten.
+   */
+  private checkPromptReady(data: string, id: string): void {
+    const active = this.terminals.get(id);
+    if (!active || active.promptSeen) return;
+
+    // Real prompt output is riddled with SGR/cursor/bracketed-paste escape
+    // codes (e.g. the zsh default prompt arrives as
+    // "...% \x1b[K\x1b[?2004h", not a clean "...% "), which defeats a
+    // naive end-of-string regex match -- strip them first, same as input
+    // bookkeeping does for the opposite direction (see prompt-capture.ts).
+    const clean = stripInputEscapeSequences(data);
+    const looksLikePrompt =
+      /([A-Za-z]:\\[^:]+)>/.test(clean) || /[:\s]((?:~|\/)[\w\-/.\s]*)\s*[$#%]\s*$/m.test(clean);
+    if (!looksLikePrompt) return;
+
+    active.promptSeen = true;
+    if (this.ipcWindow && !this.ipcWindow.isDestroyed()) {
+      this.ipcWindow.webContents.send("terminal:ready", { terminalId: id });
+    }
+  }
+
+  /**
    * Attempt to detect CWD changes from shell prompt output.
    * This is a heuristic based on common shell prompt patterns.
    */
   private detectCwdChange(data: string, session: TerminalSession): void {
+    // Strip SGR/cursor/bracketed-paste escape codes first -- the real
+    // prompt line is riddled with them (e.g. "...% \x1b[K\x1b[?2004h"),
+    // which silently defeats these end-of-string regexes most of the time.
+    data = stripInputEscapeSequences(data);
+
     // Look for PowerShell prompt pattern: C:\Users\...>
     const psMatch = data.match(/([A-Za-z]:\\[^:]+)>/);
     if (psMatch && psMatch[1]) {

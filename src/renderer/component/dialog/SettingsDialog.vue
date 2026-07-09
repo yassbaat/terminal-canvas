@@ -4,7 +4,9 @@ import { toRaw } from "vue";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useUIStore } from "@renderer/store/ui";
+import { useLaunchProfileStore } from "@renderer/store/launchProfile";
 import type { GroqSettings } from "@renderer/type/groq";
+import { X } from "lucide-vue-next";
 
 const props = defineProps<{
   open: boolean;
@@ -17,17 +19,67 @@ const emit = defineEmits<{
 const terminalStore = useTerminalStore();
 const workspaceStore = useWorkspaceStore();
 const uiStore = useUIStore();
+const launchProfileStore = useLaunchProfileStore();
 
-const activeTab = ref<"general" | "groq" | "system">("general");
+const activeTab = ref<"general" | "launch" | "groq" | "system">("general");
+
+// Launch profile management
+const newProfileLabel = ref("");
+const newProfileCommand = ref("");
+const editingProfileId = ref<string | null>(null);
+const editLabel = ref("");
+const editCommand = ref("");
+
+function addProfile() {
+  const label = newProfileLabel.value.trim();
+  const command = newProfileCommand.value.trim();
+  if (!label || !command) return;
+  launchProfileStore.addCustomProfile(label, command);
+  newProfileLabel.value = "";
+  newProfileCommand.value = "";
+}
+
+function startEditProfile(id: string, label: string, command: string) {
+  editingProfileId.value = id;
+  editLabel.value = label;
+  editCommand.value = command;
+}
+
+function saveEditProfile() {
+  if (!editingProfileId.value) return;
+  const label = editLabel.value.trim();
+  const command = editCommand.value.trim();
+  if (label && command) {
+    launchProfileStore.updateCustomProfile(editingProfileId.value, { label, command });
+  }
+  editingProfileId.value = null;
+}
+
+function cancelEditProfile() {
+  editingProfileId.value = null;
+}
 
 // General settings
 const defaultShellId = ref("");
+const defaultTermWidth = ref(760);
+const defaultTermHeight = ref(480);
+
+const SIZE_PRESETS = [
+  { label: "Small", width: 560, height: 360 },
+  { label: "Medium", width: 760, height: 480 },
+  { label: "Large", width: 1000, height: 640 },
+];
+
+function applySizePreset(preset: { width: number; height: number }) {
+  defaultTermWidth.value = preset.width;
+  defaultTermHeight.value = preset.height;
+}
 
 // Groq settings
 const groqSettings = ref<GroqSettings>({
   apiKey: "",
   baseUrl: "https://api.groq.com/openai/v1",
-  model: "llama-3.1-8b-instant",
+  model: "openai/gpt-oss-20b",
   temperature: 0.1,
   maxTokens: 256,
   enabled: true,
@@ -39,6 +91,7 @@ const groqTestResult = ref<string | null>(null);
 const contextMenuRegistered = ref(false);
 const contextMenuLoading = ref(false);
 const isWindows = window.api?.platform === "win32";
+const isMac = window.api?.platform === "darwin";
 
 onMounted(async () => {
   // Load groq settings
@@ -53,6 +106,8 @@ onMounted(async () => {
 
   // Load general settings from workspace
   defaultShellId.value = workspaceStore.settings.defaultShellId || "";
+  defaultTermWidth.value = workspaceStore.settings.defaultTerminalSize?.width || 760;
+  defaultTermHeight.value = workspaceStore.settings.defaultTerminalSize?.height || 480;
 
   // Check context menu status
   try {
@@ -66,12 +121,15 @@ function close() {
   emit("update:open", false);
 }
 
+// Groq deprecated llama-3.1-70b-versatile (Jan 2025), mixtral-8x7b-32768
+// (Mar 2025), and gemma2-9b-it (Oct 2025) -- all now error in production.
+// llama-3.1-8b-instant and llama-3.3-70b-versatile are also deprecated as
+// of 2026-08-16, with openai/gpt-oss-20b and openai/gpt-oss-120b as Groq's
+// recommended replacements. See https://console.groq.com/docs/deprecations
 const GROQ_MODELS = [
-  { value: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant" },
-  { value: "llama-3.3-70b-versatile", label: "Llama 3.3 70B Versatile" },
-  { value: "llama-3.1-70b-versatile", label: "Llama 3.1 70B Versatile" },
-  { value: "mixtral-8x7b-32768", label: "Mixtral 8x7B" },
-  { value: "gemma2-9b-it", label: "Gemma 2 9B" },
+  { value: "openai/gpt-oss-20b", label: "GPT-OSS 20B (fast, recommended default)" },
+  { value: "openai/gpt-oss-120b", label: "GPT-OSS 120B (more capable)" },
+  { value: "qwen/qwen3.6-27b", label: "Qwen 3.6 27B" },
 ];
 
 function plainGroqSettings(): GroqSettings {
@@ -90,6 +148,10 @@ async function saveAll() {
   // Save workspace settings
   workspaceStore.updateSettings({
     defaultShellId: defaultShellId.value || null,
+    defaultTerminalSize: {
+      width: Math.max(300, defaultTermWidth.value || 760),
+      height: Math.max(200, defaultTermHeight.value || 480),
+    },
   });
 
   close();
@@ -142,7 +204,7 @@ async function toggleContextMenu() {
     <div class="dialog" @click.stop>
       <div class="dialog-header">
         <h3>Settings</h3>
-        <button class="dialog-close" @click="close">&times;</button>
+        <button class="dialog-close" @click="close"><X :size="16" /></button>
       </div>
 
       <div class="dialog-tabs">
@@ -152,6 +214,13 @@ async function toggleContextMenu() {
           @click="activeTab = 'general'"
         >
           General
+        </button>
+        <button
+          class="dialog-tab"
+          :class="{ active: activeTab === 'launch' }"
+          @click="activeTab = 'launch'"
+        >
+          Launch Profiles
         </button>
         <button
           class="dialog-tab"
@@ -190,6 +259,58 @@ async function toggleContextMenu() {
           </div>
 
           <div class="form-group">
+            <label>Default Terminal Size</label>
+            <span class="form-hint">
+              The canvas box size new terminals spawn at. Terminals still
+              resize to fit whatever box size you drag them to afterward.
+            </span>
+            <div class="size-preset-row">
+              <button
+                v-for="preset in SIZE_PRESETS"
+                :key="preset.label"
+                type="button"
+                class="tc-btn"
+                :class="{
+                  'tc-btn-primary':
+                    defaultTermWidth === preset.width && defaultTermHeight === preset.height,
+                }"
+                @click="applySizePreset(preset)"
+              >
+                {{ preset.label }}
+              </button>
+            </div>
+            <div class="form-row" style="margin-top: 6px;">
+              <div class="form-group">
+                <label>Width (px)</label>
+                <input v-model.number="defaultTermWidth" class="tc-input" type="number" min="300" step="20" />
+              </div>
+              <div class="form-group">
+                <label>Height (px)</label>
+                <input v-model.number="defaultTermHeight" class="tc-input" type="number" min="200" step="20" />
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Terminal Header Style</label>
+            <span class="form-hint">
+              How much detail each terminal's header bar shows.
+            </span>
+            <div class="size-preset-row">
+              <button
+                v-for="style in (['comfortable', 'compact', 'minimal'] as const)"
+                :key="style"
+                type="button"
+                class="tc-btn"
+                :class="{ 'tc-btn-primary': uiStore.headerStyle === style }"
+                @click="uiStore.setHeaderStyle(style)"
+              >
+                {{ style.charAt(0).toUpperCase() + style.slice(1) }}
+              </button>
+            </div>
+          </div>
+
+          <div class="form-group">
             <label>Attention Notifications</label>
             <span class="form-hint">
               Flags a terminal (canvas badge, layer badge, and the bell
@@ -225,6 +346,65 @@ async function toggleContextMenu() {
                   long-running ones do. Set to 0 to notify on every command.
                 </span>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Launch Profiles Tab -->
+        <div v-if="activeTab === 'launch'" class="tab-panel">
+          <div class="form-group">
+            <label>Built-in Providers</label>
+            <span class="form-hint">
+              Available when creating a new terminal -- pick one to have its
+              command typed and submitted automatically once the shell is ready.
+            </span>
+            <div class="profile-list">
+              <div
+                v-for="profile in launchProfileStore.builtInProfiles"
+                :key="profile.id"
+                class="profile-row"
+              >
+                <component :is="profile.icon" class="profile-row-glyph" :size="13" :style="{ color: profile.color }" />
+                <span class="profile-row-label">{{ profile.label }}</span>
+                <span class="profile-row-command">{{ profile.command || "(no auto-run)" }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Custom Providers &amp; Commands</label>
+            <span class="form-hint">
+              Add your own auto-run shortcuts -- a different agent CLI, a venv
+              activation, a dev-server start command, anything you type often.
+            </span>
+            <div class="profile-list">
+              <div
+                v-for="profile in launchProfileStore.customProfiles"
+                :key="profile.id"
+                class="profile-row"
+              >
+                <template v-if="editingProfileId === profile.id">
+                  <input v-model="editLabel" class="tc-input profile-edit-input" placeholder="Label" />
+                  <input v-model="editCommand" class="tc-input profile-edit-input" placeholder="Command" />
+                  <button class="tc-btn tc-btn-primary" @click="saveEditProfile">Save</button>
+                  <button class="tc-btn" @click="cancelEditProfile">Cancel</button>
+                </template>
+                <template v-else>
+                  <component :is="profile.icon" class="profile-row-glyph" :size="13" :style="{ color: profile.color }" />
+                  <span class="profile-row-label">{{ profile.label }}</span>
+                  <span class="profile-row-command">{{ profile.command }}</span>
+                  <button class="tc-btn" @click="startEditProfile(profile.id, profile.label, profile.command)">Edit</button>
+                  <button class="tc-btn" @click="launchProfileStore.removeCustomProfile(profile.id)">Delete</button>
+                </template>
+              </div>
+              <div v-if="launchProfileStore.customProfiles.length === 0" class="profile-row-empty">
+                No custom providers yet.
+              </div>
+            </div>
+            <div class="profile-add-row">
+              <input v-model="newProfileLabel" class="tc-input" placeholder="Label (e.g. My Agent)" />
+              <input v-model="newProfileCommand" class="tc-input" placeholder="Command (e.g. my-agent --flag)" />
+              <button class="tc-btn tc-btn-primary" @click="addProfile">Add</button>
             </div>
           </div>
         </div>
@@ -328,12 +508,40 @@ async function toggleContextMenu() {
                   : "Add to Context Menu" }}
             </button>
           </div>
-          <div v-else class="system-section">
-            <h4 class="system-heading">Finder Integration</h4>
+          <div v-else-if="isMac" class="system-section">
+            <h4 class="system-heading">Finder Quick Action</h4>
             <p class="system-desc">
-              Right-click-to-open-here integration is currently only available
-              on Windows (Explorer context menu). On macOS, use the "Open"
-              button in the toolbar or drag a folder onto the canvas.
+              Add "Open in Terminal Canvas" to the right-click menu for folders
+              in Finder (under Quick Actions / Services). Only works from the
+              installed app in /Applications, not a dev build.
+            </p>
+            <div class="system-status">
+              <span
+                class="status-dot"
+                :class="contextMenuRegistered ? 'active' : 'inactive'"
+              />
+              <span class="status-text">
+                {{ contextMenuRegistered ? "Registered" : "Not registered" }}
+              </span>
+            </div>
+            <button
+              class="tc-btn tc-btn-primary"
+              :disabled="contextMenuLoading"
+              @click="toggleContextMenu"
+            >
+              {{ contextMenuLoading
+                ? "Working..."
+                : contextMenuRegistered
+                  ? "Remove from Finder"
+                  : "Add to Finder" }}
+            </button>
+          </div>
+          <div v-else class="system-section">
+            <h4 class="system-heading">Right-Click Integration</h4>
+            <p class="system-desc">
+              Right-click-to-open-here integration is only available on
+              Windows and macOS. Use the "Open" button in the toolbar or drag
+              a folder onto the canvas instead.
             </p>
           </div>
         </div>
@@ -483,6 +691,11 @@ async function toggleContextMenu() {
   gap: 12px;
 }
 
+.size-preset-row {
+  display: flex;
+  gap: 6px;
+}
+
 .form-row .form-group {
   flex: 1;
 }
@@ -546,6 +759,68 @@ async function toggleContextMenu() {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--tc-border-color);
+  border-radius: var(--tc-border-radius-sm);
+  background: var(--tc-bg-secondary);
+}
+
+.profile-row-glyph {
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+}
+
+.profile-row-label {
+  font-size: var(--tc-font-size-sm);
+  color: var(--tc-text-primary);
+  font-weight: 500;
+  flex-shrink: 0;
+  min-width: 110px;
+}
+
+.profile-row-command {
+  font-size: var(--tc-font-size-xs);
+  color: var(--tc-text-muted);
+  font-family: var(--tc-font-mono);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-row-empty {
+  font-size: var(--tc-font-size-sm);
+  color: var(--tc-text-muted);
+  padding: 6px 8px;
+}
+
+.profile-edit-input {
+  flex: 1;
+}
+
+.profile-add-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.profile-add-row .tc-input {
+  flex: 1;
 }
 
 .system-heading {

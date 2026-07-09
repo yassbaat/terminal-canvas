@@ -4,6 +4,7 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useUIStore } from "@renderer/store/ui";
+import { useWorkspaceStore } from "@renderer/store/workspace";
 
 const props = defineProps<{
   terminalId: string;
@@ -19,6 +20,7 @@ const emit = defineEmits<{
 const terminalContainer = ref<HTMLDivElement | null>(null);
 const terminalStore = useTerminalStore();
 const uiStore = useUIStore();
+const workspaceStore = useWorkspaceStore();
 
 // The terminal itself stays dark in both app themes (ANSI palettes are
 // tuned for a dark ground, and every terminal app keeps this convention) --
@@ -64,12 +66,58 @@ function handleFocus() {
   }
 }
 
+/**
+ * Normally stops propagation so a click into the terminal focuses it without
+ * the gesture reaching Vue Flow's pane (which would otherwise treat it as a
+ * node-drag/selection start). But while the user is holding the pan
+ * modifier (Shift/Space), let the event bubble through untouched so the
+ * pane's own pan-drag handling can take over -- otherwise panning is dead
+ * the moment a drag starts over any terminal's text area.
+ */
+function handlePointerDown(event: MouseEvent): void {
+  if (uiStore.isPanKeyPressed) return;
+  event.stopPropagation();
+  handleFocus();
+}
+
 let xterm: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
 let dataUnsubscribe: (() => void) | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let focusInHandler: (() => void) | null = null;
 let focusOutHandler: (() => void) | null = null;
+let wheelHandler: ((e: WheelEvent) => void) | null = null;
+let selectionCorrectionHandler: ((e: MouseEvent) => void) | null = null;
+
+// Events xterm.js hit-tests against a click/drag position (selection start/
+// extend/end, double-click word select, right-click, link clicks).
+const POINTER_HITTEST_EVENTS = ["mousedown", "mousemove", "mouseup", "click", "dblclick", "contextmenu", "auxclick"] as const;
+
+/**
+ * xterm.js measures its character-cell size once via canvas text metrics or
+ * a hidden DOM span's offsetWidth (see @xterm/xterm's CharSizeService) --
+ * both are inherently zoom-invariant, since neither reads
+ * getBoundingClientRect(). But turning a click into a column/row divides by
+ * that fixed cell size using (event.clientX - rect.left), and THAT
+ * numerator, being getBoundingClientRect()-based, DOES reflect Vue Flow's
+ * current canvas zoom (a CSS transform: scale() on an ancestor pane).
+ * Dividing a zoom-scaled pixel offset by a zoom-invariant cell width is
+ * wrong by exactly the zoom factor -- e.g. at 50% zoom, every click
+ * resolves to half the column it should, which is exactly "selection starts
+ * far from where I pressed." Rewriting clientX/clientY here (capture
+ * phase, so this runs before xterm's own listeners on its inner elements
+ * see the event) to what they'd be at 100% zoom fixes this without
+ * touching xterm's internals or its own (correct, stable) cols/rows.
+ */
+function correctPointerEventForZoom(event: MouseEvent): void {
+  const zoom = workspaceStore.viewport.zoom;
+  if (!zoom || zoom === 1 || !terminalContainer.value) return;
+  const rect = terminalContainer.value.getBoundingClientRect();
+  const correctedX = rect.left + (event.clientX - rect.left) / zoom;
+  const correctedY = rect.top + (event.clientY - rect.top) / zoom;
+  Object.defineProperty(event, "clientX", { value: correctedX, configurable: true });
+  Object.defineProperty(event, "clientY", { value: correctedY, configurable: true });
+}
 
 onMounted(async () => {
   await nextTick();
@@ -79,11 +127,14 @@ onMounted(async () => {
   xterm = new Terminal({
     cols: props.cols,
     rows: props.rows,
-    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, Monaco, 'Courier New', monospace",
-    fontSize: 14,
+    // Keep in sync with --tc-font-mono in variables.css -- xterm.js can't
+    // read CSS custom properties, so the stack is duplicated here.
+    fontFamily:
+      "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Cascadia Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Liberation Mono', 'Ubuntu Mono', Monaco, 'Courier New', monospace",
+    fontSize: 15,
     fontWeight: 400,
     fontWeightBold: 600,
-    lineHeight: 1.25,
+    lineHeight: 1.3,
     letterSpacing: 0,
     theme: xtermThemeFor(uiStore.resolvedTheme),
     cursorBlink: true,
@@ -120,6 +171,26 @@ onMounted(async () => {
   xterm.onData((data) => {
     window.api.terminal.write(props.terminalId, data);
   });
+
+  // Let the canvas pan when a scroll gesture is over this terminal, but only
+  // once the internal scrollback buffer itself has nowhere left to go --
+  // otherwise scrolling through output and panning the canvas would both
+  // happen at once from the same wheel event (removing the old blanket
+  // @wheel.stop on the node fixed panning but reopened this).
+  const viewportEl = xterm.element?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
+  wheelHandler = (e: WheelEvent) => {
+    if (!viewportEl) return;
+    const atTop = viewportEl.scrollTop <= 0;
+    const atBottom = viewportEl.scrollTop + viewportEl.clientHeight >= viewportEl.scrollHeight - 1;
+    const canAbsorb = (e.deltaY < 0 && !atTop) || (e.deltaY > 0 && !atBottom);
+    if (canAbsorb) e.stopPropagation();
+  };
+  terminalContainer.value.addEventListener("wheel", wheelHandler, { passive: true });
+
+  selectionCorrectionHandler = correctPointerEventForZoom;
+  for (const evt of POINTER_HITTEST_EVENTS) {
+    terminalContainer.value.addEventListener(evt, selectionCorrectionHandler as EventListener, { capture: true });
+  }
 
   // Handle focus / blur via DOM events (xterm.js 5.x does not have onFocus/onBlur)
   const el = xterm.element || terminalContainer.value;
@@ -194,6 +265,14 @@ onUnmounted(() => {
     if (focusInHandler) el.removeEventListener("focusin", focusInHandler);
     if (focusOutHandler) el.removeEventListener("focusout", focusOutHandler);
   }
+  if (wheelHandler && terminalContainer.value) {
+    terminalContainer.value.removeEventListener("wheel", wheelHandler);
+  }
+  if (selectionCorrectionHandler && terminalContainer.value) {
+    for (const evt of POINTER_HITTEST_EVENTS) {
+      terminalContainer.value.removeEventListener(evt, selectionCorrectionHandler as EventListener, { capture: true });
+    }
+  }
   if (xterm) {
     xterm.dispose();
     xterm = null;
@@ -225,8 +304,8 @@ watch(
   <div
     ref="terminalContainer"
     class="xterm-view"
-    @mousedown.stop="handleFocus"
-    @pointerdown.stop="handleFocus"
+    @mousedown="handlePointerDown"
+    @pointerdown="handlePointerDown"
   />
 </template>
 
@@ -235,6 +314,10 @@ watch(
   width: 100%;
   height: 100%;
   overflow: hidden;
+  /* xterm's DOM renderer draws real text, so standard font-smoothing hints
+     apply and make a visible difference on macOS in particular. */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeSpeed;
 }
 
 /* Ensure xterm.js canvas is never squished by parent transforms */
@@ -251,5 +334,9 @@ watch(
 
 .xterm-view :deep(.xterm-viewport) {
   width: 100% !important;
+  /* Scroll the buffer while there's room to; once maxed out, don't chain
+     the scroll into the canvas pane's pan-on-scroll (would feel like the
+     canvas "grabbing" the gesture mid-scrollback). */
+  overscroll-behavior: contain;
 }
 </style>

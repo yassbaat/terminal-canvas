@@ -6,10 +6,17 @@ import { useUIStore } from "@renderer/store/ui";
 import { formatDateTime } from "@renderer/util/format";
 import type { PromptEntry } from "@renderer/type/prompt";
 import PromptItem from "@renderer/component/terminal/PromptItem.vue";
+import { useResizeHandle } from "@renderer/composable/useResizeHandle";
 
 const terminalStore = useTerminalStore();
 const promptStore = usePromptStore();
 const uiStore = useUIStore();
+
+const { startResize } = useResizeHandle(
+  () => uiStore.inspectorWidth,
+  (w) => uiStore.setInspectorWidth(w),
+  "left"
+);
 
 const session = computed(() => terminalStore.focusedSession);
 const activeTab = computed({
@@ -206,6 +213,7 @@ function copyPromptText(text: string) {
         </template>
       </div>
     </div>
+    <div class="inspector-resize-handle" @mousedown="startResize" />
   </div>
 </template>
 
@@ -217,6 +225,23 @@ function copyPromptText(text: string) {
   background: var(--tc-bg-card);
   border-left: 1px solid var(--tc-border-color);
   overflow: hidden;
+  position: relative;
+}
+
+.inspector-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+}
+
+.inspector-resize-handle:hover,
+.inspector-resize-handle:active {
+  background: var(--tc-accent);
+  opacity: 0.5;
 }
 
 .inspector-tabs {

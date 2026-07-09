@@ -1,13 +1,58 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, watch } from "vue";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useUIStore } from "@renderer/store/ui";
 import { shortenCwd } from "@renderer/util/path";
+import { AGENT_META } from "@renderer/util/agents";
+import { useResizeHandle } from "@renderer/composable/useResizeHandle";
+import { useVueFlow } from "@vue-flow/core";
+import { Folder, StickyNote, Bell, X } from "lucide-vue-next";
 
 const terminalStore = useTerminalStore();
 const workspaceStore = useWorkspaceStore();
 const uiStore = useUIStore();
+// Same shared canvas store instance as WorkspaceCanvas.vue/Toolbar.vue (see
+// their comments on why an explicit id is required here).
+const { setCenter, getViewport } = useVueFlow("canvas");
+
+const { startResize } = useResizeHandle(
+  () => uiStore.sidebarWidth,
+  (w) => uiStore.setSidebarWidth(w),
+  "right"
+);
+
+// The list was previously never fetched at all, so this tab always rendered
+// as permanently empty regardless of how many workspaces were actually
+// saved to disk -- refresh it whenever the tab becomes active.
+watch(
+  () => uiStore.sidebarTab,
+  (tab) => {
+    if (tab === "workspaces") {
+      workspaceStore.loadWorkspaceList();
+    }
+  },
+  { immediate: true }
+);
+
+function openWorkspace(id: string): void {
+  workspaceStore.switchToWorkspace(id);
+}
+
+/**
+ * Double-clicking a terminal in the Layers panel pans/zooms the canvas to
+ * center it and focuses it, so browsing the list is also a way to navigate.
+ */
+function navigateToTerminal(id: string): void {
+  const session = terminalStore.sessions.get(id);
+  if (!session) return;
+  const width = session.node.width || 760;
+  const height = session.node.height || 480;
+  const centerX = session.node.x + width / 2;
+  const centerY = session.node.y + height / 2;
+  setCenter(centerX, centerY, { zoom: Math.max(getViewport().zoom, 0.75), duration: 400 });
+  terminalStore.setFocused(id);
+}
 
 const sessions = computed(() => terminalStore.allSessions);
 
@@ -129,7 +174,7 @@ function handleLayerClick(
           @click="handleLayerClick('group', group.id, $event)"
         >
           <div class="layer-row">
-            <span class="layer-icon">&#128193;</span>
+            <Folder class="layer-icon" :size="12" />
             <span class="layer-name" :title="group.name">{{ group.name }}</span>
             <span class="layer-count">{{ group.terminalIds.length }}</span>
           </div>
@@ -140,11 +185,20 @@ function handleLayerClick(
             class="layer-item terminal-layer nested"
             :class="{ selected: isTerminalSelected(tid) }"
             @click.stop="handleLayerClick('terminal', tid, $event)"
+            @dblclick.stop="navigateToTerminal(tid)"
           >
             <div class="layer-row">
               <span class="layer-status-dot" :class="terminalStore.sessions.get(tid)?.status" />
+              <component
+                :is="AGENT_META[terminalStore.sessions.get(tid)!.activeAgent!].icon"
+                v-if="terminalStore.sessions.get(tid)?.activeAgent"
+                class="layer-agent-glyph"
+                :size="11"
+                :style="{ color: AGENT_META[terminalStore.sessions.get(tid)!.activeAgent!].color }"
+                :title="AGENT_META[terminalStore.sessions.get(tid)!.activeAgent!].label"
+              />
               <span class="layer-name">{{ terminalStore.sessions.get(tid)?.name ?? tid }}</span>
-              <span v-if="terminalStore.sessions.get(tid)?.needsAttention" class="layer-attention" title="Needs attention">&#128276;</span>
+              <Bell v-if="terminalStore.sessions.get(tid)?.needsAttention" class="layer-attention" :size="11" title="Needs attention" />
             </div>
           </div>
         </div>
@@ -159,13 +213,22 @@ function handleLayerClick(
             exited: session.status === 'exited' || session.status === 'crashed'
           }"
           @click="handleLayerClick('terminal', session.id, $event)"
+          @dblclick="navigateToTerminal(session.id)"
         >
           <div class="layer-row">
             <span class="layer-status-dot" :class="`status-${session.status}`" />
+            <component
+              :is="AGENT_META[session.activeAgent].icon"
+              v-if="session.activeAgent"
+              class="layer-agent-glyph"
+              :size="11"
+              :style="{ color: AGENT_META[session.activeAgent].color }"
+              :title="AGENT_META[session.activeAgent].label"
+            />
             <span class="layer-name">{{ session.name }}</span>
-            <span v-if="session.needsAttention" class="layer-attention" title="Needs attention">&#128276;</span>
+            <Bell v-if="session.needsAttention" class="layer-attention" :size="11" title="Needs attention" />
             <button class="layer-kill" @click.stop="killTerminal(session.id)" title="Kill">
-              &times;
+              <X :size="12" />
             </button>
           </div>
           <div class="layer-meta">
@@ -183,7 +246,7 @@ function handleLayerClick(
           @click="handleLayerClick('note', note.id, $event)"
         >
           <div class="layer-row">
-            <span class="layer-icon">&#128221;</span>
+            <StickyNote class="layer-icon" :size="12" />
             <span class="layer-name">{{ note.text ? note.text.split('\n')[0].slice(0, 30) : 'Empty note' }}</span>
           </div>
         </div>
@@ -198,13 +261,14 @@ function handleLayerClick(
           v-for="ws in workspaceStore.workspaceList"
           :key="ws.id"
           class="workspace-item"
-          @click="workspaceStore.loadWorkspace(ws.id)"
+          @click="openWorkspace(ws.id)"
         >
           <span class="workspace-name">{{ ws.name }}</span>
-          <span class="workspace-date">{{ new Date(ws.updatedAt).toLocaleDateString() }}</span>
+          <span class="workspace-date">{{ ws.terminalCount }} term &bull; {{ new Date(ws.updatedAt).toLocaleDateString() }}</span>
         </div>
       </div>
     </div>
+    <div class="sidebar-resize-handle" @mousedown="startResize" />
   </div>
 </template>
 
@@ -216,6 +280,23 @@ function handleLayerClick(
   background: var(--tc-bg-card);
   border-right: 1px solid var(--tc-border-color);
   overflow: hidden;
+  position: relative;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle:active {
+  background: var(--tc-accent);
+  opacity: 0.5;
 }
 
 .sidebar-tabs {
@@ -321,6 +402,12 @@ function handleLayerClick(
   flex-shrink: 0;
 }
 
+.layer-agent-glyph {
+  font-size: 11px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
 .layer-name {
   font-size: var(--tc-font-size-sm);
   color: var(--tc-text-primary);
@@ -397,10 +484,8 @@ function handleLayerClick(
 
 /* Attention badge (idle/bell notification) */
 .layer-attention {
-  font-size: 11px;
-  line-height: 1;
   flex-shrink: 0;
-  filter: grayscale(0) saturate(1.4);
+  color: var(--tc-warning);
 }
 
 .layer-item.terminal-layer:has(.layer-attention) {

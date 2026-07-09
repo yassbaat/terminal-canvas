@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import type { Group } from "@renderer/type/workspace";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useTerminalStore } from "@renderer/store/terminal";
+import { ChevronDown, ChevronRight, Ungroup, X } from "lucide-vue-next";
 
 const props = defineProps<{
   id: string;
@@ -135,14 +136,15 @@ watch(
         :title="isCollapsed ? 'Expand group' : 'Collapse group'"
         @click.stop="toggleCollapse"
       >
-        {{ isCollapsed ? "+" : "&#8722;" }}
+        <ChevronRight v-if="isCollapsed" :size="13" />
+        <ChevronDown v-else :size="13" />
       </button>
       <button
         class="group-collapse-btn group-ungroup-btn"
         title="Ungroup (terminals are kept)"
         @click.stop="ungroup"
       >
-        &#215;
+        <Ungroup :size="13" />
       </button>
     </div>
 
@@ -165,7 +167,7 @@ watch(
           title="Remove from group"
           @click.stop="removeTerminal(session!.id)"
         >
-          &#215;
+          <X :size="11" />
         </button>
       </div>
 

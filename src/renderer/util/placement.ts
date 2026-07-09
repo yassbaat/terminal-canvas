@@ -1,5 +1,5 @@
 import type { TerminalSession } from "@renderer/type/terminal";
-import type { Group } from "@renderer/type/workspace";
+import type { Group, StickyNote } from "@renderer/type/workspace";
 
 export interface Rect {
   x: number;
@@ -32,7 +32,8 @@ function hasCollision(
   candidate: Rect,
   terminals: TerminalSession[],
   groups: Group[],
-  excludeTerminalId?: string
+  excludeTerminalId?: string,
+  notes: StickyNote[] = []
 ): boolean {
   for (const t of terminals) {
     if (excludeTerminalId && t.id === excludeTerminalId) continue;
@@ -44,6 +45,11 @@ function hasCollision(
   }
   for (const g of groups) {
     if (rectsOverlap(candidate, { x: g.x, y: g.y, width: g.width, height: g.height }, PADDING)) {
+      return true;
+    }
+  }
+  for (const n of notes) {
+    if (rectsOverlap(candidate, { x: n.x, y: n.y, width: n.width, height: n.height }, PADDING)) {
       return true;
     }
   }
@@ -68,7 +74,8 @@ export function findNonOverlappingPosition(
   size: { width: number; height: number } = {
     width: DEFAULT_TERMINAL_WIDTH,
     height: DEFAULT_TERMINAL_HEIGHT,
-  }
+  },
+  notes: StickyNote[] = []
 ): { x: number; y: number } {
   const cellW = size.width + PADDING;
   const cellH = size.height + PADDING;
@@ -100,7 +107,7 @@ export function findNonOverlappingPosition(
     width: size.width,
     height: size.height,
   };
-  if (!hasCollision(exactCandidate, terminals, groups)) {
+  if (!hasCollision(exactCandidate, terminals, groups, undefined, notes)) {
     return { x: exactCandidate.x, y: exactCandidate.y };
   }
 
@@ -132,7 +139,7 @@ export function findNonOverlappingPosition(
           height: size.height,
         };
 
-        if (!hasCollision(candidate, terminals, groups)) {
+        if (!hasCollision(candidate, terminals, groups, undefined, notes)) {
           return { x: candidate.x, y: candidate.y };
         }
       }

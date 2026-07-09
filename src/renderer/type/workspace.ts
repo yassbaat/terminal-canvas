@@ -7,6 +7,8 @@ export interface WorkspaceSettings {
   autoNameSessions: boolean;
   autoRunSavedCommands: boolean;
   defaultShellId: string | null;
+  /** Pixel size new terminal nodes spawn at on the canvas. */
+  defaultTerminalSize: { width: number; height: number };
 }
 
 export interface WorkspaceViewport {

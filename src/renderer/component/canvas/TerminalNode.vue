@@ -2,8 +2,12 @@
 import { computed, ref, watch } from "vue";
 import type { TerminalSession } from "@renderer/type/terminal";
 import { useTerminalStore } from "@renderer/store/terminal";
+import { useUIStore } from "@renderer/store/ui";
 import { Handle, Position } from "@vue-flow/core";
 import { NodeResizer } from "@vue-flow/node-resizer";
+import { AGENT_META } from "@renderer/util/agents";
+import { useResizeHandle } from "@renderer/composable/useResizeHandle";
+import { Bell } from "lucide-vue-next";
 import TerminalHeader from "@renderer/component/terminal/TerminalHeader.vue";
 import TerminalFooter from "@renderer/component/terminal/TerminalFooter.vue";
 import XtermView from "@renderer/component/terminal/XtermView.vue";
@@ -23,9 +27,16 @@ const emit = defineEmits<{
 }>();
 
 const terminalStore = useTerminalStore();
+const uiStore = useUIStore();
 
 // Local state
 const showPromptRail = ref(true);
+
+const { startResize: startMemoryResize } = useResizeHandle(
+  () => uiStore.memoryRailWidth,
+  (w) => uiStore.setMemoryRailWidth(w),
+  "left"
+);
 
 // Is this terminal currently focused?
 const isFocused = computed(
@@ -34,6 +45,13 @@ const isFocused = computed(
 
 // Does it need attention (idle after being busy, or rang the bell)?
 const needsAttention = computed(() => props.data.session.needsAttention);
+
+// Colored top accent so an active coding agent is recognizable at a glance
+// even when zoomed out on the canvas, not just from the header text.
+const agentColor = computed(() => {
+  const agent = props.data.session.activeAgent;
+  return agent ? AGENT_META[agent].color : null;
+});
 
 function acknowledgeAttention(): void {
   terminalStore.setFocused(props.id);
@@ -80,7 +98,6 @@ watch(
   <div
     class="terminal-node"
     :class="{ selected, focused: isFocused, dragging, 'needs-attention': needsAttention }"
-    @wheel.stop
   >
     <Handle type="target" :position="Position.Top" />
     <NodeResizer :min-width="300" :min-height="200" />
@@ -90,9 +107,14 @@ watch(
       :title="data.session.attentionReason === 'bell' ? 'Rang the bell — click to view' : 'Looks idle — click to view'"
       @click.stop="acknowledgeAttention"
     >
-      &#128276;
+      <Bell :size="13" />
     </button>
     <div class="terminal-node-inner">
+      <div
+        v-if="agentColor"
+        class="terminal-agent-accent"
+        :style="{ background: agentColor }"
+      />
       <!-- Header: drag handle + session info + controls -->
       <TerminalHeader
         :session="data.session"
@@ -112,10 +134,16 @@ watch(
             @focus="terminalStore.setFocused(id)"
           />
         </div>
+        <div
+          v-show="showPromptRail"
+          class="memory-resize-handle"
+          @mousedown.stop="startMemoryResize"
+        />
         <PromptRail
           v-show="showPromptRail"
           :terminal-id="data.session.id"
           class="terminal-memory"
+          :style="{ '--memory-rail-width': uiStore.memoryRailWidth + 'px' }"
         />
       </div>
 
@@ -203,6 +231,11 @@ watch(
   filter: brightness(1.1);
 }
 
+.terminal-agent-accent {
+  height: 3px;
+  flex-shrink: 0;
+}
+
 .terminal-node-body {
   flex: 1;
   display: flex;
@@ -219,11 +252,23 @@ watch(
 }
 
 .terminal-memory {
-  width: 220px;
   flex-shrink: 0;
   border-left: 1px solid var(--tc-border-color);
   background: var(--tc-memory-bg);
   overflow-y: auto;
+}
+
+.memory-resize-handle {
+  width: 5px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  z-index: 5;
+}
+
+.memory-resize-handle:hover,
+.memory-resize-handle:active {
+  background: var(--tc-accent);
+  opacity: 0.5;
 }
 
 

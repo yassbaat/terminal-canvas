@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import type { TerminalSession } from "@renderer/type/terminal";
 import { usePromptStore } from "@renderer/store/prompt";
+import { NotebookPen } from "lucide-vue-next";
 
 const props = defineProps<{
   session: TerminalSession;
@@ -28,7 +29,7 @@ const statusClass = computed(() => `status-${props.session.status}`);
         class="footer-prompt-count"
         title="Agent Memory entries"
       >
-        {{ promptCount }} &#9998;
+        {{ promptCount }} <NotebookPen :size="11" />
       </span>
       <span v-if="session.pid" class="footer-pid">PID: {{ session.pid }}</span>
     </div>
@@ -87,6 +88,9 @@ const statusClass = computed(() => `status-${props.session.status}`);
 }
 
 .footer-prompt-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   color: var(--tc-accent);
   cursor: pointer;
 }

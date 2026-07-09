@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import type { GroqSettings } from "@renderer/type/groq";
+import { X } from "lucide-vue-next";
 
 const props = defineProps<{
   open: boolean;
@@ -13,7 +14,7 @@ const emit = defineEmits<{
 const settings = ref<GroqSettings>({
   apiKey: "",
   baseUrl: "https://api.groq.com/openai/v1",
-  model: "llama-3.1-8b-instant",
+  model: "openai/gpt-oss-20b",
   temperature: 0.1,
   maxTokens: 256,
   enabled: true,
@@ -62,7 +63,7 @@ function close() {
     <div class="dialog" @click.stop>
       <div class="dialog-header">
         <h3>Groq Settings</h3>
-        <button class="dialog-close" @click="close">&times;</button>
+        <button class="dialog-close" @click="close"><X :size="16" /></button>
       </div>
       
       <div class="dialog-body">
@@ -91,8 +92,8 @@ function close() {
         
         <div class="form-group">
           <label>Model</label>
-          <input v-model="settings.model" class="tc-input" placeholder="llama-3.1-8b-instant" type="text" />
-          <span class="form-hint">e.g., llama-3.1-8b-instant, llama-3.3-70b-versatile</span>
+          <input v-model="settings.model" class="tc-input" placeholder="openai/gpt-oss-20b" type="text" />
+          <span class="form-hint">e.g., openai/gpt-oss-20b, openai/gpt-oss-120b, qwen/qwen3.6-27b</span>
         </div>
         
         <div class="form-row">

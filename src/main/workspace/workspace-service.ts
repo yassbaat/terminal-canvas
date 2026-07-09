@@ -15,6 +15,7 @@ const DEFAULT_SETTINGS: WorkspaceSettings = {
   autoNameSessions: true,
   autoRunSavedCommands: false,
   defaultShellId: "powershell",
+  defaultTerminalSize: { width: 760, height: 480 },
 };
 
 /**
@@ -165,6 +166,33 @@ export function listWorkspaces(): WorkspaceSummary[] {
   summaries.sort((a, b) => b.updatedAt - a.updatedAt);
 
   return summaries;
+}
+
+/**
+ * Rename a workspace without loading it into a live session -- a targeted
+ * patch of just the `name` field on disk. Renaming via the renderer's
+ * loadWorkspace() would be wrong here: that action recreates every saved
+ * terminal as a real running PTY, which is not something a "rename" from a
+ * workspace list should ever trigger as a side effect.
+ */
+export function renameWorkspace(workspaceId: string, name: string): void {
+  const filePath = getWorkspaceFilePath(workspaceId);
+
+  if (!existsSync(filePath)) {
+    logger.warn(`Cannot rename: workspace file not found: ${filePath}`);
+    return;
+  }
+
+  try {
+    const raw = readFileSync(filePath, "utf-8");
+    const parsed = JSON.parse(raw);
+    parsed.name = name;
+    parsed.updatedAt = Date.now();
+    writeFileSync(filePath, JSON.stringify(parsed, null, 2), "utf-8");
+    logger.info(`Workspace renamed: ${workspaceId} -> "${name}"`);
+  } catch (err) {
+    logger.error(`Failed to rename workspace ${workspaceId}:`, err);
+  }
 }
 
 /**

@@ -4,6 +4,7 @@ import type {
   Workspace,
   Group,
   WorkspaceSettings,
+  WorkspaceSummary,
 } from "@renderer/type/workspace";
 import type { GroupNamingContext } from "@renderer/type/groq";
 import { useTerminalStore } from "@renderer/store/terminal";
@@ -16,6 +17,7 @@ const DEFAULT_SETTINGS: WorkspaceSettings = {
   autoNameSessions: true,
   autoRunSavedCommands: false,
   defaultShellId: null,
+  defaultTerminalSize: { width: 760, height: 480 },
 };
 
 // Cycled automatically so every new group is visually distinct without the
@@ -39,7 +41,7 @@ const GROUP_COLORS = [
 export const useWorkspaceStore = defineStore("workspace", () => {
   // ─── State ───────────────────────────────────────────────────────
   const currentWorkspace = ref<Workspace | null>(null);
-  const workspaceList = ref<Array<{ id: string; name: string; updatedAt: number }>>([]);
+  const workspaceList = ref<WorkspaceSummary[]>([]);
   const isSaving = ref(false);
   const lastSavedAt = ref<number | null>(null);
   const selectedNoteIds = ref<Set<string>>(new Set());
@@ -137,9 +139,21 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (!ws) return null;
 
     currentWorkspace.value = ws;
+    // Workspaces saved before a settings field existed won't have it on disk --
+    // merge over defaults so older saved files don't crash on a missing key.
+    currentWorkspace.value.settings = { ...DEFAULT_SETTINGS, ...ws.settings };
     lastSavedAt.value = Date.now();
 
     const terminalStore = useTerminalStore();
+    // Kill any real PTY processes left running from whatever was loaded
+    // before -- otherwise switching workspaces orphans them: they keep
+    // running in the main process even once the renderer stops referencing
+    // them here.
+    await Promise.all(
+      Array.from(terminalStore.sessions.keys()).map((sessionId) =>
+        window.api.terminal.kill(sessionId).catch(() => {})
+      )
+    );
     terminalStore.sessions = new Map();
     terminalStore.focusedTerminalId = null;
     terminalStore.selectedTerminalIds = new Set();
@@ -179,6 +193,19 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   /**
+   * Save the current workspace (if any, and if switching to a different one)
+   * before loading another -- the shared "switch workspace" path for both
+   * the sidebar's Workspaces tab and the home/launcher screen, so navigating
+   * away from a session never silently drops unsaved layout changes.
+   */
+  async function switchToWorkspace(id: string): Promise<Workspace | null> {
+    if (currentWorkspace.value && currentWorkspace.value.id !== id) {
+      await saveCurrentWorkspace();
+    }
+    return loadWorkspace(id);
+  }
+
+  /**
    * Delete a saved workspace by ID.
    */
   async function deleteWorkspace(id: string): Promise<void> {
@@ -186,6 +213,22 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     workspaceList.value = workspaceList.value.filter((w) => w.id !== id);
     if (currentWorkspace.value?.id === id) {
       currentWorkspace.value = null;
+    }
+  }
+
+  /**
+   * Rename a saved workspace by ID. Works whether or not it's the currently
+   * loaded workspace -- does NOT load it into a live session to do so (see
+   * the main-process renameWorkspace(), which patches the file directly).
+   */
+  async function renameWorkspace(id: string, name: string): Promise<void> {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    await window.api.workspace.rename(id, trimmed);
+    const entry = workspaceList.value.find((w) => w.id === id);
+    if (entry) entry.name = trimmed;
+    if (currentWorkspace.value?.id === id) {
+      currentWorkspace.value.name = trimmed;
     }
   }
 
@@ -600,7 +643,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     saveCurrentWorkspace,
     loadWorkspaceList,
     loadWorkspace,
+    switchToWorkspace,
     deleteWorkspace,
+    renameWorkspace,
     updateViewport,
     addGroup,
     createGroup,

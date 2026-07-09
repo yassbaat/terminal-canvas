@@ -23,6 +23,12 @@ const AGENT_PHRASES =
  * the captured prompt -- the real PTY still receives the raw, unmodified
  * data (see writeToTerminal in terminal-manager.ts); only our own
  * bookkeeping needs the clean version.
+ *
+ * Also covers OSC sequences (ESC ] ... BEL / ESC ] ... ESC \\): the shell
+ * queries the terminal's color palette (OSC 10/11, "what's your foreground/
+ * background color?") and xterm.js's reply to that query loops back through
+ * this same input channel, e.g. "]10;rgb:e0e0/e0e0/e0e0\" -- exactly the
+ * garbled text previously showing up in Agent Memory.
  */
 export function stripInputEscapeSequences(data: string): string {
   return (
@@ -36,6 +42,10 @@ export function stripInputEscapeSequences(data: string): string {
       // SS3 sequences: ESC O <final byte> -- some function/arrow keys sent
       // in "application keypad" mode.
       .replace(/\x1bO[\x40-\x7e]/g, "")
+      // OSC sequences: ESC ] <anything except its own terminator> then
+      // either BEL or the 2-byte ST terminator (ESC \). Covers color-query
+      // replies (OSC 10/11/4/...), window-title sets, and similar.
+      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
   );
 }
 

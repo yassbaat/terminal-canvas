@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import type { TerminalSession } from "@renderer/type/terminal";
+import { MoreVertical } from "lucide-vue-next";
 
 const props = defineProps<{
   session: TerminalSession;
@@ -34,7 +35,7 @@ function onMenuItemClick(action: () => void) {
 <template>
   <div class="terminal-menu" ref="menuRef">
     <button class="menu-trigger" @click="toggleMenu">
-      <span class="menu-dots">&#8942;</span>
+      <MoreVertical :size="14" />
     </button>
     <div v-if="showMenu" class="menu-dropdown">
       <button

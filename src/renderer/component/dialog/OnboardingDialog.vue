@@ -5,6 +5,7 @@ import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useUIStore } from "@renderer/store/ui";
 import type { GroqSettings } from "@renderer/type/groq";
+import { SquareTerminal, LayoutGrid, Keyboard, Brain, Sparkles, Rocket } from "lucide-vue-next";
 
 const terminalStore = useTerminalStore();
 const workspaceStore = useWorkspaceStore();
@@ -15,7 +16,7 @@ const selectedShellId = ref("");
 const groqSettings = ref<GroqSettings>({
   apiKey: "",
   baseUrl: "https://api.groq.com/openai/v1",
-  model: "llama-3.1-8b-instant",
+  model: "openai/gpt-oss-20b",
   temperature: 0.1,
   maxTokens: 256,
   enabled: true,
@@ -52,12 +53,12 @@ function skip() {
   step.value = totalSteps - 1;
 }
 
+// See SettingsDialog.vue for why these are the only options offered --
+// the previous defaults are all deprecated or deprecating on Groq's side.
 const GROQ_MODELS = [
-  { value: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant" },
-  { value: "llama-3.3-70b-versatile", label: "Llama 3.3 70B Versatile" },
-  { value: "llama-3.1-70b-versatile", label: "Llama 3.1 70B Versatile" },
-  { value: "mixtral-8x7b-32768", label: "Mixtral 8x7B" },
-  { value: "gemma2-9b-it", label: "Gemma 2 9B" },
+  { value: "openai/gpt-oss-20b", label: "GPT-OSS 20B (fast, recommended default)" },
+  { value: "openai/gpt-oss-120b", label: "GPT-OSS 120B (more capable)" },
+  { value: "qwen/qwen3.6-27b", label: "Qwen 3.6 27B" },
 ];
 
 function plainGroqSettings(): GroqSettings {
@@ -135,7 +136,7 @@ function finishWithoutTerminal() {
 
       <!-- Step 0: Welcome -->
       <div v-if="step === 0" class="onboarding-step">
-        <div class="step-icon">◆</div>
+        <SquareTerminal class="step-icon" :size="32" />
         <h2 class="step-title">Welcome to Terminal Canvas</h2>
         <p class="step-desc">
           Your infinite canvas for coding-agent terminals. Pan, zoom, group, and
@@ -143,19 +144,19 @@ function finishWithoutTerminal() {
         </p>
         <div class="step-features">
           <div class="feature">
-            <span class="feature-icon">⊞</span>
+            <LayoutGrid class="feature-icon" :size="15" />
             <span>Infinite canvas with pan & zoom</span>
           </div>
           <div class="feature">
-            <span class="feature-icon">⌨</span>
+            <Keyboard class="feature-icon" :size="15" />
             <span>Embedded real terminals (PowerShell, Bash, WSL)</span>
           </div>
           <div class="feature">
-            <span class="feature-icon">🧠</span>
+            <Brain class="feature-icon" :size="15" />
             <span>Agent Memory — every prompt you type is captured</span>
           </div>
           <div class="feature">
-            <span class="feature-icon">✨</span>
+            <Sparkles class="feature-icon" :size="15" />
             <span>AI auto-naming powered by Groq</span>
           </div>
         </div>
@@ -261,7 +262,7 @@ function finishWithoutTerminal() {
 
       <!-- Step 4: Finish -->
       <div v-else-if="step === 4" class="onboarding-step">
-        <div class="step-icon">🚀</div>
+        <Rocket class="step-icon" :size="32" />
         <h2 class="step-title">You're All Set</h2>
         <p class="step-desc">
           Terminal Canvas is ready. Create your first terminal and start building.
@@ -384,10 +385,8 @@ function finishWithoutTerminal() {
 }
 
 .step-icon {
-  font-size: 48px;
   color: var(--tc-accent);
   margin-bottom: 8px;
-  line-height: 1;
 }
 
 .step-title {
@@ -427,10 +426,9 @@ function finishWithoutTerminal() {
 }
 
 .feature-icon {
-  font-size: 16px;
   width: 24px;
-  text-align: center;
   flex-shrink: 0;
+  color: var(--tc-accent);
 }
 
 .shell-grid {

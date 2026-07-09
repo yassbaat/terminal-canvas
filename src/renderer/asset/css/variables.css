@@ -57,7 +57,14 @@
   --tc-memory-pinned-border: rgba(78, 204, 163, 0.25);
 
   /* Typography */
-  --tc-font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', 'Monaco', 'Courier New', monospace;
+  /* Ordered so a real, well-hinted monospace font is used on every platform
+     even though none of these are bundled with the app: Menlo (bundled with
+     macOS since 10.7, the Terminal.app/iTerm2 default and noticeably
+     crisper than the older Monaco) and Cascadia/Consolas (bundled with
+     Windows Terminal/Office) both win over generic fallbacks; DejaVu Sans
+     Mono/Liberation Mono cover most Linux distros. JetBrains Mono/Fira Code
+     are kept first for anyone who does have them installed. */
+  --tc-font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Cascadia Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Liberation Mono', 'Ubuntu Mono', Monaco, 'Courier New', monospace;
   --tc-font-sans: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
   --tc-font-size-xs: 11px;
   --tc-font-size-sm: 12px;

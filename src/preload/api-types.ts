@@ -7,6 +7,7 @@ import type {
   TerminalCwdEvent,
   TerminalRenamedEvent,
   TerminalAttentionEvent,
+  TerminalReadyEvent,
 } from "@renderer/type/terminal";
 import type { PromptEntry, CreatePromptOptions } from "@renderer/type/prompt";
 import type { Workspace, WorkspaceSummary, SaveWorkspaceOptions } from "@renderer/type/workspace";
@@ -28,6 +29,7 @@ export interface TerminalAPI {
   onCwdChanged(callback: (event: TerminalCwdEvent) => void): () => void;
   onRenamed(callback: (event: TerminalRenamedEvent) => void): () => void;
   onAttention(callback: (event: TerminalAttentionEvent) => void): () => void;
+  onReady(callback: (event: TerminalReadyEvent) => void): () => void;
 }
 
 export interface PromptAPI {
@@ -45,6 +47,7 @@ export interface WorkspaceAPI {
   load(workspaceId: string): Promise<Workspace>;
   list(): Promise<WorkspaceSummary[]>;
   delete(workspaceId: string): Promise<void>;
+  rename(workspaceId: string, name: string): Promise<void>;
   updateViewport(x: number, y: number, zoom: number): Promise<void>;
 }
 

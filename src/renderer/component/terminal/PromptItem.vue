@@ -2,6 +2,7 @@
 import { ref, computed } from "vue";
 import type { PromptEntry } from "@renderer/type/prompt";
 import { formatTime, getFirstLine } from "@renderer/util/format";
+import { Copy, Repeat, Pin, PinOff, X } from "lucide-vue-next";
 
 const props = defineProps<{
   prompt: PromptEntry;
@@ -74,7 +75,7 @@ async function copyToClipboard() {
           {{ kindBadge }}
         </span>
         <span class="prompt-time">{{ formatTime(prompt.submittedAt) }}</span>
-        <span v-if="prompt.pinned" class="prompt-pinned">&#128204;</span>
+        <Pin v-if="prompt.pinned" class="prompt-pinned" :size="11" />
       </div>
       <div class="prompt-text">{{ displayText }}</div>
     </div>
@@ -85,28 +86,29 @@ async function copyToClipboard() {
         title="Copy"
         @click.stop="copyToClipboard"
       >
-        C
+        <Copy :size="12" />
       </button>
       <button
         class="prompt-action-btn"
         title="Resend"
         @click.stop="emit('resend', prompt.id)"
       >
-        &#8635;
+        <Repeat :size="12" />
       </button>
       <button
         class="prompt-action-btn"
         :title="prompt.pinned ? 'Unpin' : 'Pin'"
         @click.stop="emit('pin', prompt.id)"
       >
-        {{ prompt.pinned ? "U" : "P" }}
+        <PinOff v-if="prompt.pinned" :size="12" />
+        <Pin v-else :size="12" />
       </button>
       <button
         class="prompt-action-btn"
         title="Delete"
         @click.stop="emit('delete', prompt.id)"
       >
-        &#215;
+        <X :size="12" />
       </button>
     </div>
   </div>

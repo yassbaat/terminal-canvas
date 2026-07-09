@@ -2,6 +2,8 @@
 import { computed, nextTick, ref } from "vue";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
+import { NodeResizer } from "@vue-flow/node-resizer";
+import { Pin, PinOff, Palette, X } from "lucide-vue-next";
 
 const NOTE_COLORS = [
   { bg: "#fef3c7", border: "#f59e0b", text: "#92400e" }, // amber
@@ -110,17 +112,22 @@ function toggleTodo(index: number) {
       borderColor: color.border,
       color: color.text,
     }"
-    @wheel.stop
   >
+    <NodeResizer :min-width="140" :min-height="100" :line-style="{ borderColor: color.border }" :handle-style="{ backgroundColor: color.border }" />
     <div class="note-header">
-      <span v-if="pinnedTerminal" class="note-pin" title="Pinned to {{ pinnedTerminal.name }}">&#128204;</span>
+      <Pin v-if="pinnedTerminal" class="note-pin" :size="12" :title="`Pinned to ${pinnedTerminal.name}`" />
       <span v-else class="note-pin-placeholder" />
       <div class="note-actions">
-        <button class="note-btn" title="Change color" @click.stop="cycleColor">&#127912;</button>
-        <button class="note-btn" :title="note.pinnedToTerminalId ? 'Unpin' : 'Pin to focused terminal'" @click.stop="togglePin">
-          &#128204;
+        <button class="note-btn" title="Change color" @click.stop="cycleColor">
+          <Palette :size="13" />
         </button>
-        <button class="note-btn" title="Delete note" @click.stop="deleteNote">&#215;</button>
+        <button class="note-btn" :title="note.pinnedToTerminalId ? 'Unpin' : 'Pin to focused terminal'" @click.stop="togglePin">
+          <PinOff v-if="note.pinnedToTerminalId" :size="13" />
+          <Pin v-else :size="13" />
+        </button>
+        <button class="note-btn" title="Delete note" @click.stop="deleteNote">
+          <X :size="13" />
+        </button>
       </div>
     </div>
 

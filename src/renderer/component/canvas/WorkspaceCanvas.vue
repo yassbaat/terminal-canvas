@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, markRaw, watch } from "vue";
+import { computed, onMounted, onUnmounted, markRaw, watch } from "vue";
 import { VueFlow, useVueFlow, Panel, SelectionMode } from "@vue-flow/core";
 import { Background, BackgroundVariant } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
@@ -19,36 +19,47 @@ const uiStore = useUIStore();
 // Vue Flow's Background/MiniMap take plain color props (not CSS custom
 // properties resolved through style), so they need theme-reactive JS values
 // rather than var(--tc-...) references.
-const dotColor = computed(() => (uiStore.resolvedTheme === "light" ? "#d6d3e6" : "#2a2a40"));
+// Previous shades (#d6d3e6 light / #2a2a40 dark) sat only ~15-20 RGB levels
+// off the canvas background (#f4f3fa / #1a1a2e), which rendered as a barely-
+// visible haze rather than a legible grid, especially at 1px dot size on
+// non-retina displays. Bumped contrast and dot size below.
+const dotColor = computed(() => (uiStore.resolvedTheme === "light" ? "#bcb6d9" : "#43436a"));
 const minimapMaskColor = computed(() =>
   uiStore.resolvedTheme === "light" ? "rgba(244, 243, 250, 0.7)" : "rgba(26, 26, 46, 0.7)"
 );
 const minimapNodeColor = computed(() => (node: Node) => {
-  if (node.type === "group") return "rgba(78, 204, 163, 0.3)";
-  return uiStore.resolvedTheme === "light" ? "#e0dff0" : "#1e1e2f";
+  if (node.type === "group") return "rgba(78, 204, 163, 0.35)";
+  if (node.type === "note") return uiStore.resolvedTheme === "light" ? "#f0d878" : "#7a6a2a";
+  // Terminal nodes get a bright, high-contrast fill so they read clearly
+  // against the minimap's own background at a glance.
+  return uiStore.resolvedTheme === "light" ? "#8a7fc2" : "#e94560";
 });
+const minimapStrokeColor = computed(() =>
+  uiStore.resolvedTheme === "light" ? "#6b5fb8" : "#ff6b81"
+);
 
 // --- Figma-like Pan / Select State --------------------------------
-
-const isPanKeyPressed = ref(false);
+// isPanKeyPressed lives in uiStore (not a local ref) so XtermView.vue can
+// also read it -- it needs to yield its own mousedown handling to let a
+// pan-drag gesture reach the pane even when it starts over xterm's text.
 
 const selectionKeyCode = computed<true | null>(() =>
-  isPanKeyPressed.value ? null : true
+  uiStore.isPanKeyPressed ? null : true
 );
 
 const panOnDrag = computed<boolean | number[]>(() =>
-  isPanKeyPressed.value ? true : [1]
+  uiStore.isPanKeyPressed ? true : [1]
 );
 
 function onPanKeyDown(e: KeyboardEvent): void {
   if (e.key === "Shift" || e.key === " ") {
-    isPanKeyPressed.value = true;
+    uiStore.isPanKeyPressed = true;
   }
 }
 
 function onPanKeyUp(e: KeyboardEvent): void {
   if (e.key === "Shift" || e.key === " ") {
-    isPanKeyPressed.value = false;
+    uiStore.isPanKeyPressed = false;
   }
 }
 
@@ -531,8 +542,8 @@ onUnmounted(() => {
     <!-- Dotted background grid -->
     <Background
       :variant="BackgroundVariant.Dots"
-      :gap="20"
-      :size="1"
+      :gap="22"
+      :size="1.6"
       :color="dotColor"
     />
 
@@ -543,8 +554,16 @@ onUnmounted(() => {
     <MiniMap
       pannable
       zoomable
+      :width="140"
+      :height="100"
       :node-color="minimapNodeColor"
+      :node-stroke-color="minimapStrokeColor"
+      :node-stroke-width="2"
+      :node-border-radius="3"
       :mask-color="minimapMaskColor"
+      :mask-stroke-color="minimapStrokeColor"
+      :mask-stroke-width="1.5"
+      class="canvas-minimap"
     />
 
     <!-- Status overlay panel -->
@@ -582,5 +601,28 @@ onUnmounted(() => {
 
 .canvas-status-running {
   color: var(--tc-status-running);
+}
+
+/* Vue Flow's minimap package hardcodes a white SVG background
+   (.vue-flow__minimap { background-color: #fff }) which clashes badly with
+   the dark theme and makes the whole thing read as a washed-out blob rather
+   than a legible overview. Override it to match the app chrome. */
+.canvas-minimap :deep(.vue-flow__minimap) {
+  background-color: var(--tc-bg-card) !important;
+  border: 1px solid var(--tc-border-color);
+  border-radius: var(--tc-border-radius);
+  box-shadow: var(--tc-shadow-md);
+  overflow: hidden;
+  /* Small by default (it was covering too much canvas) -- grows toward the
+     canvas on hover so it's still readable when you actually need it. Scales
+     via CSS transform rather than the width/height props so it stays a
+     crisp vector redraw, not a resized raster. */
+  transform-origin: bottom right;
+  transition: transform var(--tc-transition-fast), box-shadow var(--tc-transition-fast);
+}
+
+.canvas-minimap:hover :deep(.vue-flow__minimap) {
+  transform: scale(1.7);
+  box-shadow: var(--tc-shadow-lg);
 }
 </style>

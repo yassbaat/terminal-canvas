@@ -4,6 +4,7 @@ import {
   loadWorkspace,
   listWorkspaces,
   deleteWorkspace,
+  renameWorkspace,
 } from "../workspace/workspace-service";
 import { createLogger } from "../util/logger";
 
@@ -51,6 +52,15 @@ export function registerWorkspaceIPC(): void {
       deleteWorkspace(workspaceId);
     } catch (error) {
       logger.error(`IPC: workspace:delete failed for ${workspaceId}`, error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle("workspace:rename", async (_, { workspaceId, name }) => {
+    try {
+      renameWorkspace(workspaceId, name);
+    } catch (error) {
+      logger.error(`IPC: workspace:rename failed for ${workspaceId}`, error);
       throw error;
     }
   });

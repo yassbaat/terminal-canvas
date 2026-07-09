@@ -9,6 +9,8 @@ import type { Group } from "@renderer/type/workspace";
 import { findNonOverlappingPosition } from "@renderer/util/placement";
 import { playAttentionChime } from "@renderer/util/sound";
 import { useUIStore } from "@renderer/store/ui";
+import { useWorkspaceStore } from "@renderer/store/workspace";
+import { detectAgentFromCommand } from "@renderer/util/agents";
 
 /**
  * Pinia store for managing terminal sessions.
@@ -72,19 +74,28 @@ export const useTerminalStore = defineStore("terminal", () => {
       y?: number;
       viewport?: { x: number; y: number; zoom: number } | null;
       groups?: Group[];
+      /** Typed and submitted automatically once the shell's first prompt appears (see scheduleAutoRun). */
+      autoRunCommand?: string;
     }
   ): Promise<TerminalSession> {
+    // New terminals spawn at the user-configurable default box size
+    // (Settings > General > Default Terminal Size); explicit width/height
+    // (e.g. restoring a saved workspace layout) still win via updateNode
+    // right after creation.
+    const workspaceStore = useWorkspaceStore();
+    const defaultSize = workspaceStore.settings.defaultTerminalSize;
+
     const session = await window.api.terminal.create({
       shellId: options.shellId,
       cols: options.cols || 80,
       rows: options.rows || 24,
       cwd: options.cwd,
       id: options.id,
+      width: options.width ?? defaultSize?.width ?? 760,
+      height: options.height ?? defaultSize?.height ?? 480,
     });
 
-    // Apply default node size if not set
-    if (!session.node.width) session.node.width = 640;
-    if (!session.node.height) session.node.height = 400;
+    session.activeAgent = null;
 
     // Use explicit position if provided, otherwise find non-overlapping position
     if (options.x !== undefined && options.y !== undefined) {
@@ -103,7 +114,39 @@ export const useTerminalStore = defineStore("terminal", () => {
     }
 
     sessions.value.set(session.id, session);
+
+    if (options.autoRunCommand) {
+      scheduleAutoRun(session.id, options.autoRunCommand);
+    }
+
     return session;
+  }
+
+  /**
+   * Type and submit a command automatically once a freshly-created
+   * terminal's shell has printed its first prompt (see terminal:ready /
+   * checkPromptReady in the main process). Injecting text before then would
+   * land before rc files finish loading -- either getting silently eaten or
+   * landing in the wrong place. Falls back to a fixed delay if no prompt is
+   * ever detected (an unusual custom prompt that doesn't match the shared
+   * heuristic), so the command still runs rather than silently never firing.
+   */
+  function scheduleAutoRun(terminalId: string, command: string): void {
+    let fired = false;
+    const run = () => {
+      if (fired) return;
+      fired = true;
+      unsubscribe();
+      clearTimeout(fallbackTimer);
+      const s = sessions.value.get(terminalId);
+      if (s && s.status === "running") {
+        writeToTerminal(terminalId, command + "\r");
+      }
+    };
+    const unsubscribe = window.api.terminal.onReady(({ terminalId: readyId }) => {
+      if (readyId === terminalId) run();
+    });
+    const fallbackTimer = setTimeout(run, 4000);
   }
 
   /**
@@ -131,6 +174,8 @@ export const useTerminalStore = defineStore("terminal", () => {
     if (node) {
       newSession.node = { ...node };
     }
+    // Fresh process -- whatever was running before is gone.
+    newSession.activeAgent = null;
 
     sessions.value.set(newSession.id, newSession);
 
@@ -304,6 +349,25 @@ export const useTerminalStore = defineStore("terminal", () => {
     await window.api.terminal.openCwdInExplorer(id);
   }
 
+  /**
+   * Best-effort detection of a coding-agent CLI (Claude Code, Codex, Kimi,
+   * etc.) starting or exiting in a terminal, driven by what the user typed
+   * at the shell. Called from the prompt-capture listener below. See
+   * detectAgentFromCommand for why this is intentionally sticky.
+   */
+  function detectAgentFromPrompt(id: string, text: string): void {
+    const s = sessions.value.get(id);
+    if (!s) return;
+    const result = detectAgentFromCommand(text);
+    if (result.action === "start" && s.activeAgent !== result.agent) {
+      s.activeAgent = result.agent;
+      s.updatedAt = Date.now();
+    } else if (result.action === "stop" && s.activeAgent) {
+      s.activeAgent = null;
+      s.updatedAt = Date.now();
+    }
+  }
+
   // ─── IPC Listeners ───────────────────────────────────────────────
 
   /**
@@ -327,6 +391,7 @@ export const useTerminalStore = defineStore("terminal", () => {
         s.status = exitCode === 0 ? "exited" : "crashed";
         s.exitCode = exitCode;
         s.exitedAt = Date.now();
+        s.activeAgent = null;
         s.updatedAt = Date.now();
       }
     });
@@ -343,13 +408,14 @@ export const useTerminalStore = defineStore("terminal", () => {
     });
 
     // Prompt captured from terminal input
-    window.api.prompt.onAdd(({ terminalId }) => {
+    window.api.prompt.onAdd(({ terminalId, text }) => {
       const s = sessions.value.get(terminalId);
       if (s) {
         s.promptCount += 1;
         s.lastPromptAt = Date.now();
         s.updatedAt = Date.now();
       }
+      detectAgentFromPrompt(terminalId, text);
     });
 
     // Terminal auto-renamed by Groq or fallback
@@ -363,12 +429,13 @@ export const useTerminalStore = defineStore("terminal", () => {
     });
 
     // Terminal needs attention (idle after being busy, or rang the bell).
-    // Skip the flag/sound entirely if this terminal is the one currently
-    // focused -- you're already looking at it.
+    // Fires regardless of focus -- being focused doesn't mean you're
+    // actively watching it finish (you could be scrolled up reading old
+    // output, or focus could just be stale from whatever you clicked last),
+    // so both the badge and the sound should still confirm it's done.
     window.api.terminal.onAttention(({ terminalId, reason }) => {
       const s = sessions.value.get(terminalId);
       if (!s) return;
-      if (focusedTerminalId.value === terminalId) return;
 
       s.needsAttention = true;
       s.attentionReason = reason;

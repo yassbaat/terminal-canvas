@@ -1,9 +1,28 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useVueFlow } from "@vue-flow/core";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useUIStore } from "@renderer/store/ui";
+import { findNonOverlappingPosition } from "@renderer/util/placement";
+import { playAttentionChime } from "@renderer/util/sound";
+import {
+  SquareTerminal,
+  Plus,
+  FolderOpen,
+  Save,
+  Group as GroupIcon,
+  StickyNote,
+  PanelLeft,
+  PanelRight,
+  Bell,
+  Command,
+  Sun,
+  Moon,
+  Monitor,
+  Settings as SettingsIcon,
+  LayoutGrid,
+} from "lucide-vue-next";
 
 const terminalStore = useTerminalStore();
 const workspaceStore = useWorkspaceStore();
@@ -15,20 +34,48 @@ const { setCenter, getViewport } = useVueFlow("canvas");
 
 const attentionCount = computed(() => terminalStore.attentionSessions.length);
 
+// Which terminal the bell button last jumped to, so repeated clicks advance
+// through the whole list instead of re-jumping to the same one -- tracked
+// here rather than derived, since once a terminal is focused it drops out
+// of attentionSessions (see terminalStore.setFocused), so "the next one"
+// can't be inferred purely from that list once we're cycling through
+// terminals that were never flagged at all.
+const lastJumpedId = ref<string | null>(null);
+
 /**
- * Jump to the terminal that most recently needed attention. Focusing it
- * clears its flag (see terminalStore.setFocused), so the NEXT click
- * naturally advances to whichever is now most recent among the rest --
- * no separate cursor/index to manage.
+ * Jump to a terminal, prioritizing the ones that most recently needed
+ * attention (most-recent first), then falling through to every other
+ * terminal so there's always somewhere to go -- even a workspace with
+ * nothing idle yet is still fully browsable. Wraps around forever, so
+ * clicking past the end just starts over from the top.
+ *
+ * If nothing is currently flagged, this still jumps (per the "even if
+ * there was no finished job" ask) but also chimes and toasts, since that's
+ * useful signal on its own: everything's still busy.
  */
 function jumpToNextAttention(): void {
-  const next = terminalStore.attentionSessions[0];
-  if (!next) {
-    uiStore.showToast("No terminals need attention");
+  const flagged = terminalStore.attentionSessions;
+  const rest = terminalStore.allSessions.filter((s) => !flagged.includes(s));
+  const ordered = [...flagged, ...rest];
+
+  if (ordered.length === 0) {
+    uiStore.showToast("No terminals to jump to");
     return;
   }
-  const width = next.node.width || 640;
-  const height = next.node.height || 400;
+
+  if (flagged.length === 0 && !uiStore.soundMuted) {
+    playAttentionChime();
+  }
+  if (flagged.length === 0) {
+    uiStore.showToast("All terminals are busy -- nothing has finished yet");
+  }
+
+  const lastIndex = ordered.findIndex((s) => s.id === lastJumpedId.value);
+  const next = ordered[(lastIndex + 1) % ordered.length];
+
+  lastJumpedId.value = next.id;
+  const width = next.node.width || 760;
+  const height = next.node.height || 480;
   const centerX = next.node.x + width / 2;
   const centerY = next.node.y + height / 2;
   setCenter(centerX, centerY, { zoom: Math.max(getViewport().zoom, 0.75), duration: 400 });
@@ -36,8 +83,8 @@ function jumpToNextAttention(): void {
 }
 
 const themeIcon = computed(() => {
-  if (uiStore.themePreference === "system") return "\u{1F5A5}"; // desktop
-  return uiStore.themePreference === "dark" ? "\u{1F319}" : "☀️"; // moon / sun
+  if (uiStore.themePreference === "system") return Monitor;
+  return uiStore.themePreference === "dark" ? Moon : Sun;
 });
 const themeLabel = computed(() => {
   const pref = uiStore.themePreference;
@@ -98,6 +145,13 @@ async function saveWorkspace() {
   uiStore.showToast("Workspace saved");
 }
 
+/** Save the current session, then hand off to the workspace launcher. */
+async function goHome() {
+  await workspaceStore.saveCurrentWorkspace();
+  await workspaceStore.loadWorkspaceList();
+  uiStore.showHome();
+}
+
 async function groupSelected() {
   const group = await workspaceStore.groupSelectedTerminals();
   if (group) {
@@ -108,7 +162,16 @@ async function groupSelected() {
 }
 
 function addStickyNote() {
-  workspaceStore.createStickyNote();
+  const size = { width: 200, height: 160 };
+  const pos = findNonOverlappingPosition(
+    terminalStore.allSessions,
+    workspaceStore.groups,
+    getViewport(),
+    null,
+    size,
+    workspaceStore.stickyNotes
+  );
+  workspaceStore.createStickyNote({ x: pos.x, y: pos.y, width: size.width, height: size.height });
   uiStore.showToast("Sticky note added");
 }
 
@@ -133,69 +196,76 @@ function toggleInspector() {
   <div class="toolbar">
     <div class="toolbar-left">
       <div class="toolbar-brand">
-        <span class="brand-icon">&#x25C6;</span>
+        <SquareTerminal class="brand-icon" :size="18" />
         <span class="brand-name">Terminal Canvas</span>
       </div>
-      
+
+      <button class="toolbar-btn" title="Workspaces" @click="goHome">
+        <LayoutGrid class="toolbar-icon" :size="15" />
+        <span>Workspaces</span>
+      </button>
+
       <div class="toolbar-divider" />
-      
+
       <button class="toolbar-btn" title="New Terminal (Ctrl+N)" @click="quickNewTerminal">
-        <span class="toolbar-icon">+</span>
+        <Plus class="toolbar-icon" :size="15" />
         <span>New</span>
       </button>
 
       <button class="toolbar-btn" title="Open Folder" @click="openFolder">
-        <span class="toolbar-icon">&#x1F4C1;</span>
+        <FolderOpen class="toolbar-icon" :size="15" />
         <span>Open</span>
       </button>
 
       <button class="toolbar-btn" title="Save Workspace (Ctrl+S)" @click="saveWorkspace">
-        <span class="toolbar-icon">S</span>
+        <Save class="toolbar-icon" :size="15" />
         <span>Save</span>
       </button>
-      
+
       <button class="toolbar-btn" title="Group Selected (Ctrl+G)" @click="groupSelected">
-        <span class="toolbar-icon">G</span>
+        <GroupIcon class="toolbar-icon" :size="15" />
         <span>Group</span>
       </button>
 
       <button class="toolbar-btn" title="Add Sticky Note" @click="addStickyNote">
-        <span class="toolbar-icon">&#128220;</span>
+        <StickyNote class="toolbar-icon" :size="15" />
         <span>Note</span>
       </button>
-      
+
       <div class="toolbar-divider" />
-      
+
       <button class="toolbar-btn" title="Toggle Sidebar" @click="toggleSidebar">
-        <span class="toolbar-icon">&#x2630;</span>
+        <PanelLeft class="toolbar-icon" :size="15" />
       </button>
-      
+
       <button class="toolbar-btn" title="Toggle Inspector" @click="toggleInspector">
-        <span class="toolbar-icon">I</span>
+        <PanelRight class="toolbar-icon" :size="15" />
       </button>
     </div>
-    
+
     <div class="toolbar-right">
       <span v-if="workspaceStore.isSaving" class="toolbar-status">Saving...</span>
       <button
-        v-if="attentionCount > 0"
         class="toolbar-btn attention-btn"
-        :title="`${attentionCount} terminal(s) need attention — click to jump to the most recent`"
+        :class="{ 'attention-btn-active': attentionCount > 0 }"
+        :title="attentionCount > 0
+          ? `${attentionCount} terminal(s) finished — click to jump to the most recent, click again for the next`
+          : 'Browse terminals — click to jump through them, most-recently-finished first'"
         @click="jumpToNextAttention"
       >
-        <span class="toolbar-icon">&#128276;</span>
-        <span>{{ attentionCount }}</span>
+        <Bell class="toolbar-icon" :size="15" />
+        <span v-if="attentionCount > 0">{{ attentionCount }}</span>
       </button>
       <button class="toolbar-btn" title="Command Palette (Ctrl+Shift+P)" @click="openPalette">
-        <span class="toolbar-icon">&#x2318;</span>
+        <Command class="toolbar-icon" :size="15" />
         <span>Palette</span>
       </button>
       <button class="toolbar-btn" :title="themeTitle" @click="uiStore.cycleTheme()">
-        <span class="toolbar-icon">{{ themeIcon }}</span>
+        <component :is="themeIcon" class="toolbar-icon" :size="15" />
         <span>{{ themeLabel }}</span>
       </button>
       <button class="toolbar-btn" title="Settings" @click="openSettings">
-        <span class="toolbar-icon">&#x2699;</span>
+        <SettingsIcon class="toolbar-icon" :size="15" />
       </button>
     </div>
   </div>
@@ -233,7 +303,7 @@ function toggleInspector() {
 
 .brand-icon {
   color: var(--tc-accent);
-  font-size: 14px;
+  flex-shrink: 0;
 }
 
 .brand-name {
@@ -272,8 +342,8 @@ function toggleInspector() {
 }
 
 .toolbar-icon {
-  font-size: 12px;
-  opacity: 0.7;
+  opacity: 0.8;
+  flex-shrink: 0;
 }
 
 .toolbar-status {
@@ -284,10 +354,19 @@ function toggleInspector() {
 }
 
 .attention-btn {
-  color: var(--tc-warning);
+  color: var(--tc-text-muted);
 }
 
 .attention-btn:hover {
+  background: var(--tc-bg-hover);
+  color: var(--tc-text-primary);
+}
+
+.attention-btn-active {
+  color: var(--tc-warning);
+}
+
+.attention-btn-active:hover {
   background: var(--tc-warning-soft);
   color: var(--tc-warning);
 }

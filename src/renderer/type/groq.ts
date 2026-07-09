@@ -40,7 +40,7 @@ export interface GroqTestResult {
 export const DEFAULT_GROQ_SETTINGS: GroqSettings = {
   apiKey: process.env.GROQ_API_KEY || null,
   baseUrl: "https://api.groq.com/openai/v1",
-  model: "llama-3.1-8b-instant",
+  model: "openai/gpt-oss-20b",
   temperature: 0.1,
   maxTokens: 256,
   enabled: true,

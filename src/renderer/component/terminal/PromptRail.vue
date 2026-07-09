@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { usePromptStore } from "@renderer/store/prompt";
 import type { PromptEntry } from "@renderer/type/prompt";
 import PromptItem from "./PromptItem.vue";
+import { NotebookPen, ChevronRight } from "lucide-vue-next";
 
 const props = defineProps<{
   terminalId: string;
@@ -39,13 +40,24 @@ function handleCopy(_text: string) {
   // Copy is handled internally by PromptItem
   // This emit can be used for toast notifications if needed
 }
+
+// Only stop the wheel event from reaching the canvas pane (which would pan)
+// while this list can still absorb the scroll itself -- otherwise scrolling
+// through memory entries and panning the canvas would both happen at once.
+function onListWheel(e: WheelEvent): void {
+  const el = e.currentTarget as HTMLElement;
+  const atTop = el.scrollTop <= 0;
+  const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+  const canAbsorb = (e.deltaY < 0 && !atTop) || (e.deltaY > 0 && !atBottom);
+  if (canAbsorb) e.stopPropagation();
+}
 </script>
 
 <template>
   <div class="prompt-rail" :class="{ collapsed: isCollapsed }">
     <!-- Collapsed strip -->
     <div v-if="isCollapsed" class="rail-collapsed" @click="isCollapsed = false">
-      <div class="rail-collapsed-icon">&#9998;</div>
+      <NotebookPen class="rail-collapsed-icon" :size="14" />
       <div class="rail-collapsed-count">{{ promptCount }}</div>
     </div>
 
@@ -53,7 +65,9 @@ function handleCopy(_text: string) {
     <template v-else>
       <div class="rail-header">
         <span class="rail-title">Agent Memory</span>
-        <button class="rail-close-btn" @click="isCollapsed = true">&#215;</button>
+        <button class="rail-close-btn" title="Collapse" @click="isCollapsed = true">
+          <ChevronRight :size="13" />
+        </button>
       </div>
 
       <div class="rail-search">
@@ -65,7 +79,7 @@ function handleCopy(_text: string) {
         />
       </div>
 
-      <div class="rail-list">
+      <div class="rail-list" @wheel="onListWheel">
         <div v-if="prompts.length === 0" class="rail-empty">
           No prompts yet.
           <br />
@@ -94,6 +108,8 @@ function handleCopy(_text: string) {
   overflow: hidden;
   border-left: 1px solid var(--tc-memory-border);
   transition: width var(--tc-transition-normal);
+  width: var(--memory-rail-width, 220px);
+  flex-shrink: 0;
 }
 
 .prompt-rail.collapsed {
@@ -194,6 +210,7 @@ function handleCopy(_text: string) {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  overscroll-behavior: contain;
 }
 
 .rail-empty {
