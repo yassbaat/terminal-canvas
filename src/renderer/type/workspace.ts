@@ -51,6 +51,8 @@ export interface StickyNote {
   colorIndex?: number;
   pinnedToTerminalId?: string | null;
   groupId?: string | null;
+  /** Render as a big canvas title/label (large text, minimal chrome, legible when zoomed way out) rather than a normal note. */
+  isTitle?: boolean;
   createdAt: number;
   updatedAt: number;
 }

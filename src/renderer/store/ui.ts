@@ -5,6 +5,19 @@ export type InspectorTab = "terminal" | "prompt" | "settings";
 export type SidebarTab = "layers" | "workspaces";
 export type ThemePreference = "light" | "dark" | "system";
 export type TerminalHeaderStyle = "comfortable" | "compact" | "minimal";
+/** What happens on the canvas when a new terminal/note is added. */
+export type NewItemPlacement = "focus" | "arrow";
+
+/** A request for the canvas to reveal a just-added item (see revealNewItem). */
+export interface RevealTarget {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  id?: string;
+  /** Bumped every request so identical positions still re-trigger the watcher. */
+  nonce: number;
+}
 
 const THEME_STORAGE_KEY = "terminal-canvas:theme";
 const SOUND_MUTED_KEY = "terminal-canvas:sound-muted";
@@ -14,6 +27,7 @@ const SIDEBAR_WIDTH_KEY = "terminal-canvas:sidebar-width";
 const INSPECTOR_WIDTH_KEY = "terminal-canvas:inspector-width";
 const MEMORY_RAIL_WIDTH_KEY = "terminal-canvas:memory-rail-width";
 const HEADER_STYLE_KEY = "terminal-canvas:terminal-header-style";
+const NEW_ITEM_PLACEMENT_KEY = "terminal-canvas:new-item-placement";
 
 function readStoredWidth(key: string, fallback: number): number {
   const raw = localStorage.getItem(key);
@@ -63,6 +77,28 @@ export const useUIStore = defineStore("ui", () => {
   function setHeaderStyle(style: TerminalHeaderStyle): void {
     headerStyle.value = style;
     localStorage.setItem(HEADER_STYLE_KEY, style);
+  }
+
+  // ─── New-item placement behavior ─────────────────────────────────
+  const storedPlacement = localStorage.getItem(NEW_ITEM_PLACEMENT_KEY);
+  const newItemPlacement = ref<NewItemPlacement>(
+    storedPlacement === "focus" || storedPlacement === "arrow" ? storedPlacement : "arrow"
+  );
+
+  function setNewItemPlacement(mode: NewItemPlacement): void {
+    newItemPlacement.value = mode;
+    localStorage.setItem(NEW_ITEM_PLACEMENT_KEY, mode);
+  }
+
+  // Signal for the canvas to reveal a just-created item (center+focus, or a
+  // temporary pointer arrow). Set via revealNewItem; WorkspaceCanvas watches
+  // it. Kept here (not a canvas-local ref) because items get created from
+  // the Toolbar, dialogs, and the command palette -- none of which own the
+  // Vue Flow instance that can actually move the viewport.
+  const revealTarget = ref<RevealTarget | null>(null);
+
+  function revealNewItem(rect: { x: number; y: number; width: number; height: number; id?: string }): void {
+    revealTarget.value = { ...rect, nonce: Date.now() };
   }
 
   // ─── Theme ───────────────────────────────────────────────────────
@@ -322,6 +358,8 @@ export const useUIStore = defineStore("ui", () => {
     inspectorWidth,
     memoryRailWidth,
     headerStyle,
+    newItemPlacement,
+    revealTarget,
     homeVisible,
     isPanKeyPressed,
     commandPaletteOpen,
@@ -348,6 +386,8 @@ export const useUIStore = defineStore("ui", () => {
     setInspectorWidth,
     setMemoryRailWidth,
     setHeaderStyle,
+    setNewItemPlacement,
+    revealNewItem,
     showHome,
     hideHome,
     openCommandPalette,

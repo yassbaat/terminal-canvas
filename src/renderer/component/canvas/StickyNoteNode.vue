@@ -3,7 +3,7 @@ import { computed, nextTick, ref } from "vue";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { NodeResizer } from "@vue-flow/node-resizer";
-import { Pin, PinOff, Palette, X } from "lucide-vue-next";
+import { Pin, PinOff, Palette, X, Type } from "lucide-vue-next";
 
 const NOTE_COLORS = [
   { bg: "#fef3c7", border: "#f59e0b", text: "#92400e" }, // amber
@@ -13,9 +13,13 @@ const NOTE_COLORS = [
   { bg: "#f3e8ff", border: "#a855f7", text: "#6b21a8" }, // purple
 ];
 
+// A title is a short canvas label, not a place to write paragraphs -- cap it
+// so it stays a glanceable heading (and so the giant font can't overflow).
+const TITLE_MAX_LENGTH = 40;
+
 const props = defineProps<{
   id: string;
-  data: { note: { id: string; text: string; colorIndex?: number; pinnedToTerminalId?: string | null } };
+  data: { note: { id: string; text: string; colorIndex?: number; pinnedToTerminalId?: string | null; isTitle?: boolean } };
   selected?: boolean;
   dragging?: boolean;
 }>();
@@ -25,9 +29,10 @@ const workspaceStore = useWorkspaceStore();
 
 const isEditing = ref(false);
 const editText = ref("");
-const textareaRef = ref<HTMLTextAreaElement | null>(null);
+const textareaRef = ref<HTMLTextAreaElement | HTMLInputElement | null>(null);
 
 const note = computed(() => props.data.note);
+const isTitle = computed(() => note.value.isTitle === true);
 
 const color = computed(() => {
   const idx = note.value.colorIndex ?? 0;
@@ -67,7 +72,12 @@ function startEdit() {
 }
 
 function saveEdit() {
-  workspaceStore.updateStickyNote(note.value.id, { text: editText.value });
+  let text = editText.value;
+  // A title collapses to a single glanceable line and is length-capped.
+  if (isTitle.value) {
+    text = text.replace(/\s*\n\s*/g, " ").slice(0, TITLE_MAX_LENGTH);
+  }
+  workspaceStore.updateStickyNote(note.value.id, { text });
   isEditing.value = false;
 }
 
@@ -78,6 +88,20 @@ function deleteNote() {
 function cycleColor() {
   const idx = (note.value.colorIndex ?? 0) + 1;
   workspaceStore.updateStickyNote(note.value.id, { colorIndex: idx % NOTE_COLORS.length });
+}
+
+/**
+ * Flip between a normal note and a big canvas title. Switching to title mode
+ * flattens any multi-line text to one capped line so it renders cleanly at
+ * the large heading size.
+ */
+function toggleTitle() {
+  const next = !isTitle.value;
+  const patch: { isTitle: boolean; text?: string } = { isTitle: next };
+  if (next) {
+    patch.text = (note.value.text || "").replace(/\s*\n\s*/g, " ").slice(0, TITLE_MAX_LENGTH);
+  }
+  workspaceStore.updateStickyNote(note.value.id, patch);
 }
 
 function togglePin() {
@@ -106,22 +130,28 @@ function toggleTodo(index: number) {
 <template>
   <div
     class="sticky-note"
-    :class="{ selected, dragging }"
-    :style="{
-      backgroundColor: color.bg,
-      borderColor: color.border,
-      color: color.text,
-    }"
+    :class="{ selected, dragging, 'is-title': isTitle }"
+    :style="isTitle
+      ? { color: color.border }
+      : { backgroundColor: color.bg, borderColor: color.border, color: color.text }"
   >
-    <NodeResizer :min-width="140" :min-height="100" :line-style="{ borderColor: color.border }" :handle-style="{ backgroundColor: color.border }" />
+    <NodeResizer :min-width="isTitle ? 180 : 140" :min-height="isTitle ? 60 : 100" :line-style="{ borderColor: color.border }" :handle-style="{ backgroundColor: color.border }" />
     <div class="note-header">
       <Pin v-if="pinnedTerminal" class="note-pin" :size="12" :title="`Pinned to ${pinnedTerminal.name}`" />
       <span v-else class="note-pin-placeholder" />
       <div class="note-actions">
-        <button class="note-btn" title="Change color" @click.stop="cycleColor">
+        <button
+          class="note-btn"
+          :class="{ 'note-btn-active': isTitle }"
+          :title="isTitle ? 'Turn back into a note' : 'Turn into a canvas title'"
+          @click.stop="toggleTitle"
+        >
+          <Type :size="13" />
+        </button>
+        <button v-if="!isTitle" class="note-btn" title="Change color" @click.stop="cycleColor">
           <Palette :size="13" />
         </button>
-        <button class="note-btn" :title="note.pinnedToTerminalId ? 'Unpin' : 'Pin to focused terminal'" @click.stop="togglePin">
+        <button v-if="!isTitle" class="note-btn" :title="note.pinnedToTerminalId ? 'Unpin' : 'Pin to focused terminal'" @click.stop="togglePin">
           <PinOff v-if="note.pinnedToTerminalId" :size="13" />
           <Pin v-else :size="13" />
         </button>
@@ -131,7 +161,25 @@ function toggleTodo(index: number) {
       </div>
     </div>
 
-    <div v-if="isEditing" class="note-body">
+    <!-- Title mode: single big line, minimal chrome -->
+    <div v-if="isTitle" class="note-title-body" @click.stop="startEdit">
+      <input
+        v-if="isEditing"
+        ref="textareaRef"
+        v-model="editText"
+        class="note-title-input"
+        :maxlength="40"
+        :style="{ color: color.border }"
+        @blur="saveEdit"
+        @keydown.enter="saveEdit"
+        @keydown.esc="saveEdit"
+        @click.stop
+      />
+      <span v-else class="note-title-text">{{ note.text || "Title" }}</span>
+    </div>
+
+    <!-- Normal note mode -->
+    <div v-else-if="isEditing" class="note-body">
       <textarea
         ref="textareaRef"
         v-model="editText"
@@ -181,6 +229,56 @@ function toggleTodo(index: number) {
   box-shadow: 0 0 0 2px var(--tc-accent), var(--tc-shadow-lg);
 }
 
+/* Title mode: no card chrome, just big text that stays legible zoomed out.
+   container-type: size lets the font scale with the node's own height, so
+   resizing the title bigger makes the text bigger -- which is the whole
+   point: a title you can still read when the canvas is zoomed way out. */
+.sticky-note.is-title {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  container-type: size;
+}
+
+.sticky-note.is-title.selected {
+  box-shadow: 0 0 0 2px var(--tc-accent);
+  border-radius: var(--tc-border-radius);
+}
+
+.note-title-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 8px;
+  min-height: 0;
+  cursor: text;
+}
+
+.note-title-text {
+  font-size: clamp(20px, 44cqh, 160px);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.note-title-input {
+  font-size: clamp(20px, 44cqh, 160px);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  width: 100%;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-family: var(--tc-font-sans);
+}
+
 .note-header {
   display: flex;
   align-items: center;
@@ -228,6 +326,21 @@ function toggleTodo(index: number) {
 
 .note-btn:hover {
   background: rgba(255, 255, 255, 0.8);
+}
+
+.note-btn-active {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+/* In title mode the header sits over the transparent canvas, so give the
+   action buttons a solid backing so they stay tappable/visible. */
+.is-title .note-btn {
+  background: var(--tc-bg-card);
+  border: 1px solid var(--tc-border-color);
+}
+
+.is-title .note-btn:hover {
+  background: var(--tc-bg-hover);
 }
 
 .note-body {

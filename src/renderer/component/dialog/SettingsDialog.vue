@@ -311,6 +311,31 @@ async function toggleContextMenu() {
           </div>
 
           <div class="form-group">
+            <label>When adding a terminal or note</label>
+            <span class="form-hint">
+              What the canvas does when you add a new terminal or note.
+            </span>
+            <div class="size-preset-row">
+              <button
+                type="button"
+                class="tc-btn"
+                :class="{ 'tc-btn-primary': uiStore.newItemPlacement === 'arrow' }"
+                @click="uiStore.setNewItemPlacement('arrow')"
+              >
+                Point an arrow to it
+              </button>
+              <button
+                type="button"
+                class="tc-btn"
+                :class="{ 'tc-btn-primary': uiStore.newItemPlacement === 'focus' }"
+                @click="uiStore.setNewItemPlacement('focus')"
+              >
+                Jump to it
+              </button>
+            </div>
+          </div>
+
+          <div class="form-group">
             <label>Attention Notifications</label>
             <span class="form-hint">
               Flags a terminal (canvas badge, layer badge, and the bell

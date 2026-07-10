@@ -3,6 +3,8 @@ import { computed, ref, watch } from "vue";
 import type { TerminalSession } from "@renderer/type/terminal";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useUIStore } from "@renderer/store/ui";
+import { useWorkspaceStore } from "@renderer/store/workspace";
+import { usePromptStore } from "@renderer/store/prompt";
 import { Handle, Position } from "@vue-flow/core";
 import { NodeResizer } from "@vue-flow/node-resizer";
 import { AGENT_META } from "@renderer/util/agents";
@@ -28,12 +30,41 @@ const emit = defineEmits<{
 
 const terminalStore = useTerminalStore();
 const uiStore = useUIStore();
+const workspaceStore = useWorkspaceStore();
+const promptStore = usePromptStore();
 
 // Local state
 // Hidden by default -- most terminals don't need it open all the time, and
 // it competes for space with the actual terminal. Toggled per-terminal via
 // the footer's prompt-count button.
 const showPromptRail = ref(false);
+const isHovered = ref(false);
+
+// Display name, same precedence as the header.
+const displayName = computed(
+  () => props.data.session.manualName || props.data.session.autoName || props.data.session.name
+);
+
+// Most recently submitted prompt for this terminal (for the zoomed-out
+// hover preview) -- getPromptsForTerminal sorts pinned-first, so re-pick
+// strictly by time here.
+const lastPrompt = computed(() => {
+  const prompts = promptStore
+    .getPromptsForTerminal(props.id)
+    .filter((p) => p.status !== "deleted");
+  if (prompts.length === 0) return null;
+  return [...prompts].sort((a, b) => b.submittedAt - a.submittedAt)[0].text;
+});
+
+// When zoomed out far enough that the terminal's own text is illegible,
+// hovering surfaces a name + last-prompt card. It counter-scales by the
+// inverse of the canvas zoom so it stays a constant, readable on-screen
+// size no matter how far out you are (the whole point -- a preview that
+// shrank with the node would be just as unreadable as the node itself).
+const showHoverPreview = computed(
+  () => isHovered.value && !props.dragging && workspaceStore.viewport.zoom < 0.75
+);
+const inverseZoom = computed(() => 1 / (workspaceStore.viewport.zoom || 1));
 
 const { startResize: startMemoryResize } = useResizeHandle(
   () => uiStore.memoryRailWidth,
@@ -101,9 +132,30 @@ watch(
   <div
     class="terminal-node"
     :class="{ selected, focused: isFocused, dragging, 'needs-attention': needsAttention }"
+    @mouseenter="isHovered = true"
+    @mouseleave="isHovered = false"
   >
     <Handle type="target" :position="Position.Top" />
     <NodeResizer :min-width="300" :min-height="200" />
+
+    <!-- Zoomed-out hover preview: name + last prompt, counter-scaled so it
+         stays readable however far out the canvas is zoomed. -->
+    <div
+      v-if="showHoverPreview"
+      class="terminal-hover-preview nodrag"
+      :style="{ transform: `scale(${inverseZoom})` }"
+    >
+      <div class="hover-preview-name">
+        <span
+          v-if="agentColor"
+          class="hover-preview-dot"
+          :style="{ background: agentColor }"
+        />
+        {{ displayName }}
+      </div>
+      <div v-if="lastPrompt" class="hover-preview-prompt">{{ lastPrompt }}</div>
+      <div v-else class="hover-preview-prompt hover-preview-empty">No prompts yet</div>
+    </div>
     <button
       v-if="needsAttention"
       class="attention-badge"
@@ -171,6 +223,59 @@ watch(
   border-radius: var(--tc-border-radius);
   /* No overflow:hidden here (unlike terminal-node-inner) so the attention
      badge can sit just outside the card's corner without being clipped. */
+}
+
+.terminal-hover-preview {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 8px;
+  /* Counter-scaled inline (see inverseZoom); anchor the growth from the
+     bottom-left corner so it expands up-and-right off the node's top edge. */
+  transform-origin: left bottom;
+  width: 300px;
+  max-width: 300px;
+  padding: 10px 12px;
+  background: var(--tc-bg-card);
+  border: 1px solid var(--tc-border-color);
+  border-radius: var(--tc-border-radius);
+  box-shadow: var(--tc-shadow-lg);
+  z-index: var(--tc-z-node-selected);
+  pointer-events: none;
+}
+
+.hover-preview-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tc-text-primary);
+  margin-bottom: 6px;
+}
+
+.hover-preview-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.hover-preview-prompt {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--tc-text-secondary);
+  font-family: var(--tc-font-mono);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.hover-preview-empty {
+  font-style: italic;
+  opacity: 0.6;
+  font-family: var(--tc-font-sans);
 }
 
 .terminal-node-inner {

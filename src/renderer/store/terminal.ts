@@ -119,6 +119,15 @@ export const useTerminalStore = defineStore("terminal", () => {
       scheduleAutoRun(session.id, options.autoRunCommand);
     }
 
+    // Reveal genuinely-new terminals on the canvas (center+focus or a
+    // pointer arrow, per the user's setting). Skip workspace restores --
+    // those pass the saved id + explicit x/y and would otherwise fire a
+    // reveal for every terminal on load.
+    if (options.id === undefined) {
+      const uiStore = useUIStore();
+      uiStore.revealNewItem({ ...session.node, id: session.id });
+    }
+
     return session;
   }
 

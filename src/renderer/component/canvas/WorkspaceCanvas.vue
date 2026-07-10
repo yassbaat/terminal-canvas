@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, markRaw, watch } from "vue";
+import { computed, onMounted, onUnmounted, markRaw, watch, ref, nextTick } from "vue";
 import { VueFlow, useVueFlow, Panel, SelectionMode } from "@vue-flow/core";
 import { Background, BackgroundVariant } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
@@ -8,6 +8,8 @@ import type { Node, NodeChange, NodeDimensionChange, NodeSelectionChange, GraphN
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useUIStore } from "@renderer/store/ui";
+import type { TerminalSession } from "@renderer/type/terminal";
+import { ChevronLeft, ChevronRight, LayoutGrid, ArrowRight } from "lucide-vue-next";
 import TerminalNode from "./TerminalNode.vue";
 import GroupNode from "./GroupNode.vue";
 import StickyNoteNode from "./StickyNoteNode.vue";
@@ -79,6 +81,8 @@ const {
   zoomIn,
   zoomOut,
   zoomTo,
+  setCenter,
+  getViewport,
 } = useVueFlow("canvas");
 
 // Register custom node types
@@ -530,6 +534,147 @@ function handleKeyDown(e: KeyboardEvent): void {
   }
 }
 
+// --- Terminal Navigation & Arrange (top-right controls) -----------
+
+/**
+ * Center the canvas on a terminal and focus it. Zoom is bumped to at least
+ * a legible level so prev/next stepping from a far-zoomed-out view actually
+ * shows you the terminal, not a distant speck.
+ */
+function centerOnTerminal(session: TerminalSession): void {
+  const width = session.node.width || 900;
+  const height = session.node.height || 640;
+  const cx = session.node.x + width / 2;
+  const cy = session.node.y + height / 2;
+  setCenter(cx, cy, { zoom: Math.max(getViewport().zoom, 0.8), duration: 400 });
+  terminalStore.setFocused(session.id);
+}
+
+// Stable ordering for prev/next: top-to-bottom, then left-to-right, so
+// stepping follows the visual layout rather than creation order.
+const orderedTerminals = computed(() =>
+  [...terminalStore.allSessions].sort((a, b) => {
+    if (Math.abs(a.node.y - b.node.y) > 40) return a.node.y - b.node.y;
+    return a.node.x - b.node.x;
+  })
+);
+
+function navToTerminal(step: 1 | -1): void {
+  const list = orderedTerminals.value;
+  if (list.length === 0) return;
+  const currentId = terminalStore.focusedTerminalId;
+  const currentIdx = currentId ? list.findIndex((s) => s.id === currentId) : -1;
+  // From nothing focused: forward starts at the first, back at the last.
+  const nextIdx =
+    currentIdx === -1
+      ? step === 1
+        ? 0
+        : list.length - 1
+      : (currentIdx + step + list.length) % list.length;
+  centerOnTerminal(list[nextIdx]);
+}
+
+/**
+ * Auto-arrange terminals into columns grouped by working directory, so
+ * terminals working in the same folder end up adjacent. Explicitly
+ * user-triggered (a button), never automatic -- it repositions everything,
+ * which would be hostile to do behind the user's back on a canvas they've
+ * laid out by hand.
+ */
+function arrangeByPath(): void {
+  const sessions = terminalStore.allSessions;
+  if (sessions.length === 0) {
+    uiStore.showToast("No terminals to arrange");
+    return;
+  }
+
+  const GAP = 40;
+  const COL_GAP = 80;
+  const START_X = 80;
+  const START_Y = 80;
+
+  // Bucket by cwd, preserving first-seen order for stable column placement.
+  const buckets = new Map<string, TerminalSession[]>();
+  for (const s of sessions) {
+    const key = s.cwd || "~";
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(s);
+    else buckets.set(key, [s]);
+  }
+
+  let colX = START_X;
+  for (const [, group] of buckets) {
+    let rowY = START_Y;
+    let colWidth = 0;
+    for (const s of group) {
+      const w = s.node.width || 900;
+      const h = s.node.height || 640;
+      terminalStore.updateNode(s.id, { x: colX, y: rowY });
+      rowY += h + GAP;
+      colWidth = Math.max(colWidth, w);
+    }
+    colX += colWidth + COL_GAP;
+  }
+
+  uiStore.showToast(`Arranged ${sessions.length} terminal(s) by folder`);
+}
+
+// --- New-item reveal (center+focus, or temporary pointer arrow) ----
+
+const rootEl = ref<HTMLElement | null>(null);
+const pointerVisible = ref(false);
+const pointer = ref<{ x: number; y: number; angle: number; offscreen: boolean }>({
+  x: 0,
+  y: 0,
+  angle: 0,
+  offscreen: false,
+});
+let pointerTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Project a canvas-space point to screen space and show a pointer there.
+ * If the point is off-screen it's clamped to the nearest edge and the arrow
+ * rotates to point toward it; if on-screen it's a pulsing ring at the spot.
+ */
+function showPointerAt(cx: number, cy: number): void {
+  const el = rootEl.value;
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  const vp = getViewport();
+  // Vue Flow pane transform is translate(vp.x, vp.y) scale(vp.zoom).
+  const sx = vp.x + cx * vp.zoom;
+  const sy = vp.y + cy * vp.zoom;
+  const margin = 56;
+  const clampedX = Math.max(margin, Math.min(rect.width - margin, sx));
+  const clampedY = Math.max(margin, Math.min(rect.height - margin, sy));
+  const offscreen = Math.abs(clampedX - sx) > 0.5 || Math.abs(clampedY - sy) > 0.5;
+  const angle = (Math.atan2(sy - clampedY, sx - clampedX) * 180) / Math.PI;
+  pointer.value = { x: clampedX, y: clampedY, angle, offscreen };
+  pointerVisible.value = true;
+  if (pointerTimer) clearTimeout(pointerTimer);
+  pointerTimer = setTimeout(() => {
+    pointerVisible.value = false;
+  }, 2600);
+}
+
+watch(
+  () => uiStore.revealTarget,
+  (target) => {
+    if (!target) return;
+    const cx = target.x + target.width / 2;
+    const cy = target.y + target.height / 2;
+    if (uiStore.newItemPlacement === "focus") {
+      setCenter(cx, cy, { zoom: Math.max(getViewport().zoom, 0.8), duration: 400 });
+      if (target.id) {
+        // Focus after the node has had a chance to mount.
+        nextTick(() => target.id && terminalStore.setFocused(target.id));
+      }
+    } else {
+      showPointerAt(cx, cy);
+    }
+  }
+);
+
 onMounted(() => {
   window.addEventListener("keydown", handleKeyDown);
   window.addEventListener("keydown", onPanKeyDown);
@@ -540,10 +685,12 @@ onUnmounted(() => {
   window.removeEventListener("keydown", handleKeyDown);
   window.removeEventListener("keydown", onPanKeyDown);
   window.removeEventListener("keyup", onPanKeyUp);
+  if (pointerTimer) clearTimeout(pointerTimer);
 });
 </script>
 
 <template>
+  <div ref="rootEl" class="workspace-canvas-root">
   <VueFlow
     id="canvas"
     class="workspace-canvas"
@@ -604,14 +751,104 @@ onUnmounted(() => {
         </span>
       </span>
     </Panel>
+
+    <!-- Navigate / arrange controls -->
+    <Panel position="top-right" class="canvas-nav-panel">
+      <button
+        class="canvas-nav-btn"
+        title="Previous terminal"
+        :disabled="terminalStore.sessionCount === 0"
+        @click="navToTerminal(-1)"
+      >
+        <ChevronLeft :size="16" />
+      </button>
+      <button
+        class="canvas-nav-btn"
+        title="Next terminal"
+        :disabled="terminalStore.sessionCount === 0"
+        @click="navToTerminal(1)"
+      >
+        <ChevronRight :size="16" />
+      </button>
+      <div class="canvas-nav-divider" />
+      <button
+        class="canvas-nav-btn canvas-nav-btn-wide"
+        title="Arrange terminals by folder"
+        :disabled="terminalStore.sessionCount === 0"
+        @click="arrangeByPath"
+      >
+        <LayoutGrid :size="15" />
+        <span>Arrange</span>
+      </button>
+    </Panel>
   </VueFlow>
+
+    <!-- Temporary pointer showing where a new item landed (arrow placement mode) -->
+    <div
+      v-if="pointerVisible"
+      class="placement-pointer"
+      :class="{ offscreen: pointer.offscreen }"
+      :style="{ left: pointer.x + 'px', top: pointer.y + 'px' }"
+    >
+      <ArrowRight
+        v-if="pointer.offscreen"
+        class="placement-arrow"
+        :size="26"
+        :style="{ transform: `rotate(${pointer.angle}deg)` }"
+      />
+      <span v-else class="placement-ring" />
+    </div>
+  </div>
 </template>
 
 <style scoped>
+.workspace-canvas-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
 .workspace-canvas {
   width: 100%;
   height: 100%;
   background: var(--tc-bg-primary);
+}
+
+/* Placement pointer (arrow reveal mode): a screen-space overlay, positioned
+   in pixels relative to the canvas root, so it stays put regardless of the
+   flow pane's own pan/zoom transform. */
+.placement-pointer {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  z-index: 20;
+  pointer-events: none;
+  color: var(--tc-accent);
+  animation: placement-pop 0.25s ease-out;
+}
+
+.placement-arrow {
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.4));
+}
+
+.placement-ring {
+  display: block;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid var(--tc-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--tc-accent) 25%, transparent);
+  animation: placement-pulse 1s ease-out infinite;
+}
+
+@keyframes placement-pop {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.4); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+@keyframes placement-pulse {
+  0% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--tc-accent) 40%, transparent); }
+  70% { box-shadow: 0 0 0 12px color-mix(in srgb, var(--tc-accent) 0%, transparent); }
+  100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--tc-accent) 0%, transparent); }
 }
 
 .canvas-status-panel {
@@ -621,6 +858,56 @@ onUnmounted(() => {
   padding: 4px 10px;
   pointer-events: none;
   user-select: none;
+}
+
+.canvas-nav-panel {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--tc-bg-card);
+  border: 1px solid var(--tc-border-color);
+  border-radius: var(--tc-border-radius-sm);
+  padding: 3px;
+  box-shadow: var(--tc-shadow-sm);
+}
+
+.canvas-nav-btn {
+  height: 28px;
+  min-width: 28px;
+  border: none;
+  background: transparent;
+  color: var(--tc-text-secondary);
+  cursor: pointer;
+  border-radius: var(--tc-border-radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 6px;
+  font-size: var(--tc-font-size-sm);
+  transition: all var(--tc-transition-fast);
+}
+
+.canvas-nav-btn:hover:not(:disabled) {
+  background: var(--tc-bg-hover);
+  color: var(--tc-text-primary);
+}
+
+.canvas-nav-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.canvas-nav-btn-wide {
+  padding: 0 10px;
+  font-weight: 500;
+}
+
+.canvas-nav-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--tc-border-color);
+  margin: 0 2px;
 }
 
 .canvas-status-text {

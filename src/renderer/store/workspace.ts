@@ -9,6 +9,7 @@ import type {
 import type { GroupNamingContext } from "@renderer/type/groq";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { usePromptStore } from "@renderer/store/prompt";
+import { useUIStore } from "@renderer/store/ui";
 import { generateId } from "@renderer/util/ids";
 
 const DEFAULT_SETTINGS: WorkspaceSettings = {
@@ -569,6 +570,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (currentWorkspace.value) {
       currentWorkspace.value.stickyNotes.push(note);
       currentWorkspace.value.updatedAt = Date.now();
+      // Reveal the new note on the canvas (center or pointer arrow, per the
+      // user's setting). createStickyNote is only ever called for genuinely
+      // new notes -- restores rehydrate stickyNotes straight from the saved
+      // JSON, not through here -- so no restore guard is needed.
+      const uiStore = useUIStore();
+      uiStore.revealNewItem({ x: note.x, y: note.y, width: note.width, height: note.height, id: note.id });
     }
     return note;
   }
