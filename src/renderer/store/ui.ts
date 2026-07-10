@@ -28,7 +28,7 @@ function readStoredWidth(key: string, fallback: number): number {
 export const useUIStore = defineStore("ui", () => {
   // ─── Panel Visibility ────────────────────────────────────────────
   const inspectorVisible = ref(true);
-  const inspectorTab = ref<InspectorTab>("terminal");
+  const inspectorTab = ref<InspectorTab>("prompt");
   const sidebarVisible = ref(true);
   const sidebarTab = ref<SidebarTab>("layers");
 

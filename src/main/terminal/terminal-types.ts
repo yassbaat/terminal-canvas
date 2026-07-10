@@ -42,4 +42,6 @@ export interface ActiveTerminal {
    * that never touch cursor visibility are unaffected.
    */
   cursorVisible: boolean;
+  /** When the user last actually typed into this terminal (see TYPING_GRACE_MS in terminal-manager.ts). */
+  lastInputAt: number | null;
 }

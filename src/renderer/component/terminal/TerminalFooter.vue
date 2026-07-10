@@ -6,6 +6,11 @@ import { NotebookPen } from "lucide-vue-next";
 
 const props = defineProps<{
   session: TerminalSession;
+  memoryVisible?: boolean;
+}>();
+
+const emit = defineEmits<{
+  (e: "toggleMemory"): void;
 }>();
 
 const promptStore = usePromptStore();
@@ -25,9 +30,10 @@ const statusClass = computed(() => `status-${props.session.status}`);
     </div>
     <div class="footer-right">
       <span
-        v-if="promptCount > 0"
         class="footer-prompt-count"
-        title="Agent Memory entries"
+        :class="{ 'footer-prompt-count-active': memoryVisible }"
+        :title="memoryVisible ? 'Hide Agent Memory' : `Show Agent Memory (${promptCount} entries)`"
+        @click="emit('toggleMemory')"
       >
         {{ promptCount }} <NotebookPen :size="11" />
       </span>
@@ -97,6 +103,11 @@ const statusClass = computed(() => `status-${props.session.status}`);
 
 .footer-prompt-count:hover {
   text-decoration: underline;
+}
+
+.footer-prompt-count-active {
+  color: var(--tc-text-primary);
+  font-weight: 600;
 }
 
 .footer-pid {

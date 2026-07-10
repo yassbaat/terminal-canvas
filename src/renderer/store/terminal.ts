@@ -432,8 +432,11 @@ export const useTerminalStore = defineStore("terminal", () => {
     // Fires regardless of focus -- being focused doesn't mean you're
     // actively watching it finish (you could be scrolled up reading old
     // output, or focus could just be stale from whatever you clicked last),
-    // so both the badge and the sound should still confirm it's done.
-    window.api.terminal.onAttention(({ terminalId, reason }) => {
+    // so the badge should still confirm it's done. The sound is throttled
+    // separately by the main process (see MAX_IDLE_NOTIFICATIONS_PER_MINUTE)
+    // -- `chime` reflects that decision, so the badge is never dropped even
+    // when the sound is.
+    window.api.terminal.onAttention(({ terminalId, reason, chime }) => {
       const s = sessions.value.get(terminalId);
       if (!s) return;
 
@@ -443,7 +446,7 @@ export const useTerminalStore = defineStore("terminal", () => {
       s.updatedAt = Date.now();
 
       const uiStore = useUIStore();
-      if (!uiStore.soundMuted) {
+      if (chime && !uiStore.soundMuted) {
         playAttentionChime();
       }
     });

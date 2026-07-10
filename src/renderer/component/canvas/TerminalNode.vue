@@ -30,7 +30,10 @@ const terminalStore = useTerminalStore();
 const uiStore = useUIStore();
 
 // Local state
-const showPromptRail = ref(true);
+// Hidden by default -- most terminals don't need it open all the time, and
+// it competes for space with the actual terminal. Toggled per-terminal via
+// the footer's prompt-count button.
+const showPromptRail = ref(false);
 
 const { startResize: startMemoryResize } = useResizeHandle(
   () => uiStore.memoryRailWidth,
@@ -148,7 +151,11 @@ watch(
       </div>
 
       <!-- Footer: CWD + dimensions -->
-      <TerminalFooter :session="data.session" />
+      <TerminalFooter
+        :session="data.session"
+        :memory-visible="showPromptRail"
+        @toggle-memory="showPromptRail = !showPromptRail"
+      />
 
       <!-- Resize handled by NodeResizer -->
     </div>
@@ -259,7 +266,9 @@ watch(
 }
 
 .memory-resize-handle {
-  width: 5px;
+  /* This one takes real layout space (flex row, not an absolute overlay),
+     so it's widened more modestly than the sidebar/inspector handles. */
+  width: 8px;
   flex-shrink: 0;
   cursor: col-resize;
   z-index: 5;

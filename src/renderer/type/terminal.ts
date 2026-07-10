@@ -119,6 +119,8 @@ export interface TerminalRenamedEvent {
 export interface TerminalAttentionEvent {
   terminalId: string;
   reason: AttentionReason;
+  /** Whether the renderer should also play a sound for this occurrence (see MAX_IDLE_NOTIFICATIONS_PER_MINUTE). */
+  chime: boolean;
 }
 
 export interface TerminalReadyEvent {

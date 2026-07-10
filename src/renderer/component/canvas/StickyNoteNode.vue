@@ -211,8 +211,8 @@ function toggleTodo(index: number) {
 }
 
 .note-btn {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   border: none;
   background: rgba(255, 255, 255, 0.4);
   border-radius: var(--tc-border-radius-sm);

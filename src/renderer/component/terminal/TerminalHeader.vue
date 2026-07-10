@@ -287,8 +287,8 @@ function toggleOffDuty() {
 }
 
 .header-btn {
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   border: none;
   background: transparent;
   color: var(--tc-text-muted);
@@ -312,8 +312,8 @@ function toggleOffDuty() {
 }
 
 .header-btn-close {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   background: #ff5f56;
   color: rgba(77, 0, 0, 0.7);

@@ -186,6 +186,13 @@ function handleNodesChange(changes: NodeChange[]): void {
           height: dimChange.dimensions.height,
         });
       }
+      const group = workspaceStore.groups.find((g) => g.id === change.id);
+      if (group && dimChange.dimensions) {
+        workspaceStore.updateGroup(change.id, {
+          width: dimChange.dimensions.width,
+          height: dimChange.dimensions.height,
+        });
+      }
     } else if (change.type === "select") {
       const selectChange = change as NodeSelectionChange;
       if (terminalStore.sessions.has(selectChange.id)) {
@@ -299,6 +306,27 @@ function syncGroupMembershipAfterDrag(terminalId: string, node: Node): void {
   }
 }
 
+/**
+ * Same "drop into a frame" membership sync as syncGroupMembershipAfterDrag,
+ * for sticky notes. Previously notes could only ever join a group at the
+ * moment it was created (groupSelectedTerminals) and could never join or
+ * leave one afterward by dragging, unlike terminals.
+ */
+function syncNoteGroupMembershipAfterDrag(noteId: string, node: Node): void {
+  const note = workspaceStore.stickyNotes.find((n) => n.id === noteId);
+  if (!note) return;
+  const centerX = node.position.x + (note.width || 200) / 2;
+  const centerY = node.position.y + (note.height || 160) / 2;
+  const targetGroupId = groupContainingPoint(centerX, centerY);
+
+  if (targetGroupId === (note.groupId ?? null)) return;
+  if (targetGroupId) {
+    workspaceStore.addNoteToGroup(noteId, targetGroupId);
+  } else if (note.groupId) {
+    workspaceStore.removeNoteFromGroup(noteId, note.groupId);
+  }
+}
+
 function handleNodeDragStop({ node }: { node: Node }): void {
   if (node.type === "terminal") {
     const session = terminalStore.sessions.get(node.id);
@@ -334,6 +362,7 @@ function handleNodeDragStop({ node }: { node: Node }): void {
       x: node.position.x,
       y: node.position.y,
     });
+    syncNoteGroupMembershipAfterDrag(node.id, node);
   }
 }
 

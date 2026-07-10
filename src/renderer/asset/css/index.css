@@ -105,6 +105,28 @@ body {
   border-radius: var(--tc-border-radius-sm);
 }
 
+/* Vue Flow's node-resizer (terminal & sticky-note resize handles) ships
+   5x5px corner handles and 1px edge lines -- both too small to reliably
+   grab. Widen the actual element (the real hit area), not just its visible
+   border, so it stays a slim-looking line/dot but is much easier to grab;
+   the existing translate(-50%) centering in the package's own CSS keeps it
+   straddling the true edge/corner either way. */
+.vue-flow__resize-control.handle {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+}
+
+.vue-flow__resize-control.line.left,
+.vue-flow__resize-control.line.right {
+  width: 9px;
+}
+
+.vue-flow__resize-control.line.top,
+.vue-flow__resize-control.line.bottom {
+  height: 9px;
+}
+
 /* ===== xterm.js Overrides ===== */
 .xterm {
   cursor: text;

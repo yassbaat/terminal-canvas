@@ -24,11 +24,32 @@ const logger = createLogger("TerminalManager");
 // long we wait when that signal is unavailable.
 const QUIET_MS = 4000;
 
+// How recently the user must have typed into a terminal for a subsequent
+// quiet period there to be treated as "still composing/interacting" rather
+// than "a background command/agent settled." Deliberately longer than
+// QUIET_MS: the quiet timer itself only fires after QUIET_MS of silence, so
+// a shorter window here would never actually suppress anything -- by the
+// time the callback runs, at least QUIET_MS has already elapsed since the
+// last keystroke. Typing keeps re-arming this on every character, so it
+// only matters right after the user stops typing (e.g. a pause mid-prompt,
+// or the moment right after hitting Enter) -- a real agent run continues
+// well past this window with no further input at all.
+const TYPING_GRACE_MS = 8000;
+
+// Hard cap on how many "idle" (heuristic) attention notifications can fire
+// across all terminals combined per rolling minute. This is a backstop for
+// the heuristic firing more than is useful (e.g. several terminals settling
+// in quick succession) -- deliberately does not apply to "bell" (\x07),
+// which is an explicit, deliberate signal from the program itself rather
+// than a guess.
+const MAX_IDLE_NOTIFICATIONS_PER_MINUTE = 4;
+
 export class TerminalManager {
   private terminals = new Map<string, ActiveTerminal>();
   private shellConfigs: ShellConfig[] = [];
   private ipcWindow: BrowserWindow | null = null;
   private idleThresholdMs = 2000;
+  private recentIdleNotifications: number[] = [];
 
   constructor() {
     this.shellConfigs = detectShells();
@@ -54,6 +75,37 @@ export class TerminalManager {
     active.session.updatedAt = Date.now();
   }
 
+  /**
+   * Sliding-window cap on how many attention *sounds* can play per minute
+   * (see MAX_IDLE_NOTIFICATIONS_PER_MINUTE). Deliberately only gates the
+   * chime, not the badge -- badges must never silently drop (that's the
+   * one thing this feature can't get wrong), so the throttle only ever
+   * takes away noise, never information.
+   */
+  private canPlayChime(): boolean {
+    const oneMinuteAgo = Date.now() - 60000;
+    this.recentIdleNotifications = this.recentIdleNotifications.filter((t) => t > oneMinuteAgo);
+    if (this.recentIdleNotifications.length >= MAX_IDLE_NOTIFICATIONS_PER_MINUTE) {
+      return false;
+    }
+    this.recentIdleNotifications.push(Date.now());
+    return true;
+  }
+
+  /**
+   * Has this terminal been typed into recently enough that a "settled" or
+   * "bell" signal right now is more likely keyboard noise (a pause mid-
+   * prompt, a backspace-on-empty beep, a failed tab-complete) than an
+   * actual finished task? See TYPING_GRACE_MS for why the window has to be
+   * longer than QUIET_MS to matter for the idle path; it applies just as
+   * well to bell, since readline/shell beeps fire in the same onData burst
+   * as the keystroke that caused them.
+   */
+  private wasRecentlyTyped(active: ActiveTerminal): boolean {
+    if (active.lastInputAt === null) return false;
+    return Date.now() - active.lastInputAt < TYPING_GRACE_MS;
+  }
+
   private clearQuietTimer(active: ActiveTerminal): void {
     if (active.quietTimer) {
       clearTimeout(active.quietTimer);
@@ -77,7 +129,13 @@ export class TerminalManager {
     active.cursorVisible = lastShow > lastHide;
   }
 
-  private flagAttention(id: string, reason: AttentionReason): void {
+  /**
+   * Flag a terminal for attention. `chime` controls only whether the
+   * renderer should play a sound for this occurrence -- the badge
+   * (needsAttention) is always set, since missing that a terminal finished
+   * is worse than an occasional silent one.
+   */
+  private flagAttention(id: string, reason: AttentionReason, chime: boolean): void {
     const active = this.terminals.get(id);
     if (!active) return;
     if (!active.session.idleDetectionEnabled) return;
@@ -89,9 +147,9 @@ export class TerminalManager {
     active.session.updatedAt = Date.now();
 
     if (this.ipcWindow && !this.ipcWindow.isDestroyed()) {
-      this.ipcWindow.webContents.send("terminal:attention", { terminalId: id, reason });
+      this.ipcWindow.webContents.send("terminal:attention", { terminalId: id, reason, chime });
     }
-    logger.debug(`Terminal ${id} flagged for attention (${reason})`);
+    logger.debug(`Terminal ${id} flagged for attention (${reason}, chime=${chime})`);
   }
 
   setWindow(window: BrowserWindow): void {
@@ -167,8 +225,8 @@ export class TerminalManager {
       node: {
         x: defaultX,
         y: defaultY,
-        width: options.width ?? 640,
-        height: options.height ?? 400,
+        width: options.width ?? 900,
+        height: options.height ?? 640,
       },
       naming: {
         enabled: true,
@@ -214,11 +272,15 @@ export class TerminalManager {
       // (rc files have finished loading). See checkPromptReady.
       this.checkPromptReady(data, id);
 
-      // Bell (\x07) is an explicit "look at me" signal many CLIs (including
-      // coding agents) send on completion -- flag immediately regardless of
-      // how long the command has been running.
-      if (data.includes("\x07")) {
-        this.flagAttention(id, "bell");
+      // Bell (\x07) is usually an explicit "look at me" signal many CLIs
+      // (including coding agents) send on completion -- flag immediately
+      // regardless of how long the command has been running. But readline/
+      // shells also ring it for mundane keystroke feedback (backspace on an
+      // empty line, a failed tab-complete), which fires in the very same
+      // onData burst as the keystroke that caused it -- skip those so
+      // ordinary typing doesn't chime.
+      if (active && data.includes("\x07") && !this.wasRecentlyTyped(active)) {
+        this.flagAttention(id, "bell", this.canPlayChime());
       }
 
       // Idle heuristic: (re)start a quiet-period timer on every chunk. If
@@ -245,8 +307,18 @@ export class TerminalManager {
           // input prompt (cursor shown). This can only mute a flag, never
           // cause one: terminals that never touch cursor visibility default
           // to true and are unaffected.
-          if (busyDuration >= this.idleThresholdMs && stillActive.cursorVisible !== false) {
-            this.flagAttention(id, "idle");
+          const cursorSuppressed = stillActive.cursorVisible === false;
+          // Suppress if the user was typing here moments ago -- a pause
+          // mid-sentence while composing a prompt looks identical to "the
+          // command settled" from pure output timing alone (see
+          // TYPING_GRACE_MS above for why this only matters right after
+          // typing stops, not during a genuine long-running agent turn).
+          if (
+            busyDuration >= this.idleThresholdMs &&
+            !cursorSuppressed &&
+            !this.wasRecentlyTyped(stillActive)
+          ) {
+            this.flagAttention(id, "idle", this.canPlayChime());
           }
         }, QUIET_MS);
       }
@@ -277,6 +349,7 @@ export class TerminalManager {
       quietTimer: null,
       promptSeen: false,
       cursorVisible: true,
+      lastInputAt: null,
     };
 
     this.terminals.set(id, active);
@@ -301,6 +374,7 @@ export class TerminalManager {
 
     active.pty.write(data); // raw, unmodified -- the shell/program must still see everything
     active.session.lastActivityAt = Date.now();
+    active.lastInputAt = Date.now();
 
     // Track input buffer for prompt capture. Strip control/escape sequences
     // first (arrow keys, mouse-tracking reports, paste markers, etc. --
@@ -308,10 +382,22 @@ export class TerminalManager {
     // character, since a single onData chunk can bundle e.g. a mouse report
     // followed by an Enter keystroke.
     const cleaned = stripInputEscapeSequences(data);
-    for (const ch of cleaned) {
+    for (let i = 0; i < cleaned.length; i++) {
+      const ch = cleaned[i];
       const code = ch.charCodeAt(0);
-      if (ch === "\r" || ch === "\n") {
+      if (ch === "\r") {
+        // Enter. Some pipelines pair CR with a following LF for a single
+        // keypress ("\r\n") -- consume it too so it isn't then treated as
+        // a Ctrl+J newline-insert into the *next* prompt's buffer.
         this.flushInputBuffer(id);
+        if (cleaned[i + 1] === "\n") i++;
+      } else if (ch === "\n") {
+        // A bare LF (no preceding CR) is Ctrl+J in most shells and coding-
+        // agent CLIs: "insert a newline without submitting," distinct from
+        // Enter's \r above. Treating it as a submit was capturing a single
+        // multi-line prompt as several separate ones the moment Ctrl+J was
+        // used to compose it.
+        active.inputBuffer += "\n";
       } else if (code === 127) {
         // Backspace: remove last char from buffer
         active.inputBuffer = active.inputBuffer.slice(0, -1);

@@ -3,7 +3,8 @@ import { computed, ref, watch } from "vue";
 import type { Group } from "@renderer/type/workspace";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useTerminalStore } from "@renderer/store/terminal";
-import { ChevronDown, ChevronRight, Ungroup, X } from "lucide-vue-next";
+import { NodeResizer } from "@vue-flow/node-resizer";
+import { ChevronDown, ChevronRight, Ungroup, X, StickyNote as StickyNoteIcon } from "lucide-vue-next";
 
 const props = defineProps<{
   id: string;
@@ -42,13 +43,20 @@ const groupStyle = computed(() => ({
   borderColor: props.data.group.color || "var(--tc-border-color)",
 }));
 
-// Count of terminals in this group
-const terminalCount = computed(() => props.data.group.terminalIds.length);
+// Combined member count shown on the header badge (terminals + notes)
+const memberCount = computed(() => props.data.group.terminalIds.length + props.data.group.noteIds.length);
 
 // Get the terminal sessions that belong to this group
 const groupedSessions = computed(() =>
   props.data.group.terminalIds
     .map((tid) => terminalStore.sessions.get(tid))
+    .filter(Boolean)
+);
+
+// Get the sticky notes that belong to this group
+const groupedNotes = computed(() =>
+  props.data.group.noteIds
+    .map((nid) => workspaceStore.stickyNotes.find((n) => n.id === nid))
     .filter(Boolean)
 );
 
@@ -64,6 +72,13 @@ function toggleCollapse(): void {
  */
 function removeTerminal(terminalId: string): void {
   workspaceStore.removeTerminalFromGroup(terminalId, props.id);
+}
+
+/**
+ * Remove a sticky note from this group.
+ */
+function removeNote(noteId: string): void {
+  workspaceStore.removeNoteFromGroup(noteId, props.id);
 }
 
 /**
@@ -84,7 +99,8 @@ function cycleColor(): void {
 
 /**
  * Watch for position changes during drag and update workspace store.
- * Also moves grouped terminals so they travel with the group.
+ * Also moves grouped terminals AND notes so they travel with the group --
+ * notes were previously left behind entirely when a group was dragged.
  */
 watch(
   () => props.position,
@@ -108,6 +124,16 @@ watch(
             });
           }
         }
+        for (const nid of props.data.group.noteIds) {
+          if (props.selected && workspaceStore.selectedNoteIds.has(nid)) continue;
+          const n = workspaceStore.stickyNotes.find((note) => note.id === nid);
+          if (n) {
+            workspaceStore.updateStickyNote(nid, {
+              x: n.x + dx,
+              y: n.y + dy,
+            });
+          }
+        }
       }
     }
   },
@@ -121,6 +147,7 @@ watch(
     :class="{ selected, collapsed: isCollapsed, dragging }"
     :style="groupStyle"
   >
+    <NodeResizer v-if="!isCollapsed" :min-width="220" :min-height="120" :line-style="{ borderColor: data.group.color }" :handle-style="{ backgroundColor: data.group.color }" />
     <!-- Group header: name, count, collapse toggle -->
     <div class="group-header" :style="{ borderColor: data.group.color }">
       <button
@@ -130,7 +157,7 @@ watch(
         @click.stop="cycleColor"
       />
       <span class="group-name" :title="data.group.name">{{ data.group.name }}</span>
-      <span class="group-count">{{ terminalCount }}</span>
+      <span class="group-count" title="Terminals + notes in this group">{{ memberCount }}</span>
       <button
         class="group-collapse-btn"
         :title="isCollapsed ? 'Expand group' : 'Collapse group'"
@@ -171,12 +198,30 @@ watch(
         </button>
       </div>
 
+      <div
+        v-for="note in groupedNotes"
+        :key="note!.id"
+        class="group-terminal-item"
+      >
+        <StickyNoteIcon class="group-note-icon" :size="11" />
+        <span class="group-terminal-name" :title="note!.text || 'Empty note'">
+          {{ note!.text ? note!.text.split('\n')[0].slice(0, 30) : "Empty note" }}
+        </span>
+        <button
+          class="group-terminal-remove"
+          title="Remove from group"
+          @click.stop="removeNote(note!.id)"
+        >
+          <X :size="11" />
+        </button>
+      </div>
+
       <!-- Empty state -->
       <div
-        v-if="groupedSessions.length === 0"
+        v-if="groupedSessions.length === 0 && groupedNotes.length === 0"
         class="group-empty"
       >
-        Drop terminals here
+        Drop terminals or notes here
       </div>
     </div>
   </div>
@@ -217,8 +262,8 @@ watch(
 }
 
 .group-color-indicator {
-  width: 8px;
-  height: 8px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   flex-shrink: 0;
   opacity: 0.8;
@@ -254,8 +299,8 @@ watch(
 }
 
 .group-collapse-btn {
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   border: 1px solid var(--tc-border-color);
   background: var(--tc-bg-card);
   color: var(--tc-text-secondary);
@@ -306,6 +351,11 @@ watch(
   flex-shrink: 0;
 }
 
+.group-note-icon {
+  flex-shrink: 0;
+  color: var(--tc-text-muted);
+}
+
 .group-terminal-status.running {
   color: var(--tc-status-running);
 }
@@ -332,8 +382,8 @@ watch(
 }
 
 .group-terminal-remove {
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   border: none;
   background: transparent;
   color: var(--tc-text-muted);

@@ -17,7 +17,7 @@ const DEFAULT_SETTINGS: WorkspaceSettings = {
   autoNameSessions: true,
   autoRunSavedCommands: false,
   defaultShellId: null,
-  defaultTerminalSize: { width: 760, height: 480 },
+  defaultTerminalSize: { width: 900, height: 640 },
 };
 
 // Cycled automatically so every new group is visually distinct without the
@@ -142,6 +142,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     // Workspaces saved before a settings field existed won't have it on disk --
     // merge over defaults so older saved files don't crash on a missing key.
     currentWorkspace.value.settings = { ...DEFAULT_SETTINGS, ...ws.settings };
+    // Same for groups saved before note-grouping existed -- noteIds wouldn't
+    // be in the JSON at all, and it's just a plain parse with no validation
+    // on the way in (see workspace-service.ts's loadWorkspace).
+    currentWorkspace.value.groups = ws.groups.map((g) => ({ ...g, noteIds: g.noteIds ?? [] }));
     lastSavedAt.value = Date.now();
 
     const terminalStore = useTerminalStore();
@@ -300,7 +304,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   /**
    * Remove a group from the workspace.
-   * Note: does NOT delete the terminals inside — they become ungrouped.
+   * Note: does NOT delete the terminals/notes inside — they become ungrouped.
    */
   function removeGroup(id: string): void {
     if (!currentWorkspace.value) return;
@@ -310,6 +314,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       for (const terminalId of g.terminalIds) {
         const s = terminalStore.sessions.get(terminalId);
         if (s) s.groupId = null;
+      }
+      for (const noteId of g.noteIds) {
+        const note = currentWorkspace.value.stickyNotes.find((n) => n.id === noteId);
+        if (note) note.groupId = null;
       }
     }
     currentWorkspace.value.groups = currentWorkspace.value.groups.filter(
@@ -355,6 +363,45 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const s = terminalStore.sessions.get(terminalId);
     if (s && s.groupId === groupId) {
       s.groupId = null;
+    }
+  }
+
+  /**
+   * Add a sticky note to a group's member list. Mirrors addTerminalToGroup
+   * -- notes previously only ever got assigned to a group at the moment it
+   * was created (via groupSelectedTerminals), with no way to join one
+   * afterward and no reverse note.groupId link at all.
+   */
+  function addNoteToGroup(noteId: string, groupId: string): void {
+    if (!currentWorkspace.value) return;
+    const note = currentWorkspace.value.stickyNotes.find((n) => n.id === noteId);
+
+    if (note?.groupId && note.groupId !== groupId) {
+      const prev = currentWorkspace.value.groups.find((g) => g.id === note.groupId);
+      if (prev) prev.noteIds = prev.noteIds.filter((id) => id !== noteId);
+    }
+
+    const g = currentWorkspace.value.groups.find((g) => g.id === groupId);
+    if (g && !g.noteIds.includes(noteId)) {
+      g.noteIds.push(noteId);
+      currentWorkspace.value.updatedAt = Date.now();
+    }
+    if (note) note.groupId = groupId;
+  }
+
+  /**
+   * Remove a sticky note from a group's member list. Mirrors removeTerminalFromGroup.
+   */
+  function removeNoteFromGroup(noteId: string, groupId: string): void {
+    if (!currentWorkspace.value) return;
+    const g = currentWorkspace.value.groups.find((g) => g.id === groupId);
+    if (g) {
+      g.noteIds = g.noteIds.filter((id) => id !== noteId);
+      currentWorkspace.value.updatedAt = Date.now();
+    }
+    const note = currentWorkspace.value.stickyNotes.find((n) => n.id === noteId);
+    if (note && note.groupId === groupId) {
+      note.groupId = null;
     }
   }
 
@@ -409,9 +456,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       noteIds: selectedNoteIdsArr,
     });
 
-    // Assign groupId to selected terminals
+    // Assign groupId to selected terminals and notes
     for (const s of sessions) {
       if (s) s.groupId = group.id;
+    }
+    for (const n of notes) {
+      if (n) n.groupId = group.id;
     }
 
     // Nest selected groups inside the new group
@@ -653,6 +703,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     removeGroup,
     addTerminalToGroup,
     removeTerminalFromGroup,
+    addNoteToGroup,
+    removeNoteFromGroup,
     groupSelectedTerminals,
     addEdge,
     removeEdge,

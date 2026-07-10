@@ -50,6 +50,7 @@ export interface StickyNote {
   height: number;
   colorIndex?: number;
   pinnedToTerminalId?: string | null;
+  groupId?: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -65,7 +66,7 @@ export interface Group {
   color?: string;
   terminalIds: string[];
   parentId?: string | null;
-  noteIds?: string[];
+  noteIds: string[];
 }
 
 export interface WorkspaceSummary {

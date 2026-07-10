@@ -231,8 +231,10 @@ function copyPromptText(text: string) {
 .inspector-resize-handle {
   position: absolute;
   top: 0;
+  /* Stays at left: 0 (not negative) -- .inspector has overflow: hidden, so
+     anything sitting outside its box gets clipped and becomes unclickable. */
   left: 0;
-  width: 6px;
+  width: 12px;
   height: 100%;
   cursor: col-resize;
   z-index: 5;

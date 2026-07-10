@@ -15,7 +15,7 @@ const DEFAULT_SETTINGS: WorkspaceSettings = {
   autoNameSessions: true,
   autoRunSavedCommands: false,
   defaultShellId: "powershell",
-  defaultTerminalSize: { width: 760, height: 480 },
+  defaultTerminalSize: { width: 900, height: 640 },
 };
 
 /**

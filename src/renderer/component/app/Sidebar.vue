@@ -286,8 +286,13 @@ function handleLayerClick(
 .sidebar-resize-handle {
   position: absolute;
   top: 0;
+  /* Wider than it looks: the handle is invisible until hover, so growing
+     the hit area doesn't add visual weight, just makes it easier to grab.
+     Stays at right: 0 (not negative) -- .sidebar has overflow: hidden, so
+     any part of the handle sitting outside its box gets silently clipped
+     and becomes unclickable there. */
   right: 0;
-  width: 6px;
+  width: 12px;
   height: 100%;
   cursor: col-resize;
   z-index: 5;

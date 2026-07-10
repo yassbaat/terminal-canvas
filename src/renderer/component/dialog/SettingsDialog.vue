@@ -61,13 +61,13 @@ function cancelEditProfile() {
 
 // General settings
 const defaultShellId = ref("");
-const defaultTermWidth = ref(760);
-const defaultTermHeight = ref(480);
+const defaultTermWidth = ref(900);
+const defaultTermHeight = ref(640);
 
 const SIZE_PRESETS = [
-  { label: "Small", width: 560, height: 360 },
-  { label: "Medium", width: 760, height: 480 },
-  { label: "Large", width: 1000, height: 640 },
+  { label: "Small", width: 640, height: 480 },
+  { label: "Medium", width: 900, height: 640 },
+  { label: "Large", width: 1200, height: 840 },
 ];
 
 function applySizePreset(preset: { width: number; height: number }) {
@@ -106,8 +106,8 @@ onMounted(async () => {
 
   // Load general settings from workspace
   defaultShellId.value = workspaceStore.settings.defaultShellId || "";
-  defaultTermWidth.value = workspaceStore.settings.defaultTerminalSize?.width || 760;
-  defaultTermHeight.value = workspaceStore.settings.defaultTerminalSize?.height || 480;
+  defaultTermWidth.value = workspaceStore.settings.defaultTerminalSize?.width || 900;
+  defaultTermHeight.value = workspaceStore.settings.defaultTerminalSize?.height || 640;
 
   // Check context menu status
   try {
@@ -149,8 +149,8 @@ async function saveAll() {
   workspaceStore.updateSettings({
     defaultShellId: defaultShellId.value || null,
     defaultTerminalSize: {
-      width: Math.max(300, defaultTermWidth.value || 760),
-      height: Math.max(200, defaultTermHeight.value || 480),
+      width: Math.max(300, defaultTermWidth.value || 900),
+      height: Math.max(200, defaultTermHeight.value || 640),
     },
   });
 
