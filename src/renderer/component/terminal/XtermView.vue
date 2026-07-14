@@ -248,16 +248,43 @@ onMounted(async () => {
     el.addEventListener("focusout", focusOutHandler);
   }
 
-  // Listen for PTY output from main process
+  // Listen for PTY output from main process. To keep a terminal's on-screen
+  // content when its xterm remounts (moving between the canvas and the Focus
+  // stage), we first fetch the main-process replay buffer and write it, THEN go
+  // live. We subscribe *before* fetching and queue anything that streams in
+  // during the fetch, so no output is ever dropped (at worst a sub-millisecond
+  // sliver is written twice -- never lost).
+  let replayDone = false;
+  const pendingChunks: string[] = [];
   dataUnsubscribe = window.api.terminal.onData(({ terminalId, data }) => {
-    if (terminalId === props.terminalId && xterm) {
-      try {
-        xterm.write(data);
-      } catch (err) {
-        console.error("[XtermView] write failed:", err);
-      }
+    if (terminalId !== props.terminalId || !xterm) return;
+    if (!replayDone) {
+      pendingChunks.push(data);
+      return;
+    }
+    try {
+      xterm.write(data);
+    } catch (err) {
+      console.error("[XtermView] write failed:", err);
     }
   });
+
+  const finishReplay = (buffer: string) => {
+    if (!xterm) return;
+    try {
+      if (buffer) xterm.write(buffer);
+      for (const chunk of pendingChunks) xterm.write(chunk);
+    } catch (err) {
+      console.error("[XtermView] replay write failed:", err);
+    }
+    pendingChunks.length = 0;
+    replayDone = true;
+  };
+
+  window.api.terminal
+    .getBuffer(props.terminalId)
+    .then(finishReplay)
+    .catch(() => finishReplay(""));
 
   // Resize observer — debounced so rapid Vue Flow resizes don't thrash
   let resizeTimer: ReturnType<typeof setTimeout> | null = null;

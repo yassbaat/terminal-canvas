@@ -111,6 +111,14 @@ const isFocused = computed(
   () => terminalStore.focusedTerminalId === props.id
 );
 
+// When this terminal is on the Focus stage, its xterm lives in the focus tile
+// instead -- don't also mount one here, or two xterm instances would fight over
+// the one PTY (double resize). The focus tile replays the buffer so nothing is
+// lost across the move.
+const isStaged = computed(
+  () => uiStore.focusModeActive && uiStore.isInFocusSet(props.id)
+);
+
 // Does it need attention (idle after being busy, or rang the bell)?
 const needsAttention = computed(() => props.data.session.needsAttention);
 
@@ -222,11 +230,13 @@ watch(
       <div class="terminal-node-body nodrag">
         <div class="terminal-area" @click.stop="handleBodyClick">
           <XtermView
+            v-if="!isStaged"
             :terminal-id="data.session.id"
             :cols="data.session.cols"
             :rows="data.session.rows"
             @focus="terminalStore.setFocused(id)"
           />
+          <div v-else class="terminal-staged-note">On the focus stage</div>
         </div>
         <div
           v-show="showPromptRail"
@@ -435,6 +445,17 @@ watch(
   background: var(--tc-terminal-bg);
   overflow: hidden;
   cursor: text;
+}
+
+.terminal-staged-note {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tc-text-muted);
+  font-size: var(--tc-font-size-sm);
+  font-style: italic;
+  user-select: none;
 }
 
 .terminal-memory {

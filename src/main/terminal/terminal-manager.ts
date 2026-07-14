@@ -44,6 +44,10 @@ const TYPING_GRACE_MS = 8000;
 // than a guess.
 const MAX_IDLE_NOTIFICATIONS_PER_MINUTE = 4;
 
+// Cap on the per-terminal replay buffer (raw output). ~256KB is plenty to
+// reconstruct a screenful-plus of scrollback while bounding memory.
+const OUTPUT_BUFFER_LIMIT = 256 * 1024;
+
 // How long to wait before the SAME terminal can raise another "input" prompt
 // notification. Interactive menus redraw on every arrow-key press (the
 // highlighted row moves), so without this the same "choose an option" prompt
@@ -297,6 +301,11 @@ export class TerminalManager {
         if (active.lastOutputChunk.length > 5000) {
           active.lastOutputChunk = active.lastOutputChunk.slice(-5000);
         }
+        // Larger rolling buffer for replay-on-mount (Focus stage <-> canvas).
+        active.outputBuffer += data;
+        if (active.outputBuffer.length > OUTPUT_BUFFER_LIMIT) {
+          active.outputBuffer = active.outputBuffer.slice(-OUTPUT_BUFFER_LIMIT);
+        }
         this.updateCursorVisibility(active, data);
       }
 
@@ -405,6 +414,7 @@ export class TerminalManager {
       session,
       inputBuffer: "",
       lastOutputChunk: "",
+      outputBuffer: "",
       shellConfig,
       spawnOptions: { ...options },
       promptHistory: [],
@@ -616,6 +626,11 @@ export class TerminalManager {
   getSession(id: string): TerminalSession | undefined {
     const active = this.terminals.get(id);
     return active ? { ...active.session } : undefined;
+  }
+
+  /** Recent raw output for replay into a freshly-mounted xterm (Focus stage). */
+  getBuffer(id: string): string {
+    return this.terminals.get(id)?.outputBuffer ?? "";
   }
 
   getAllSessions(): TerminalSession[] {

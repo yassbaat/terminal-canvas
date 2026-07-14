@@ -22,6 +22,8 @@ export interface TerminalAPI {
   clear(terminalId: string): Promise<void>;
   listShells(): Promise<ShellInfo[]>;
   openCwdInExplorer(terminalId: string): Promise<void>;
+  /** Recent raw output for this terminal, for replaying into a fresh xterm. */
+  getBuffer(terminalId: string): Promise<string>;
   setIdleThreshold(ms: number): Promise<void>;
   setIdleDetectionEnabled(terminalId: string, enabled: boolean): Promise<void>;
   onData(callback: (event: TerminalDataEvent) => void): () => void;

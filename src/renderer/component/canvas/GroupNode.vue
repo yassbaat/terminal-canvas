@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import type { Group } from "@renderer/type/workspace";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useTerminalStore } from "@renderer/store/terminal";
+import { useUIStore } from "@renderer/store/ui";
 import { NodeResizer } from "@vue-flow/node-resizer";
 import { ChevronDown, ChevronRight, Ungroup, X, StickyNote as StickyNoteIcon } from "lucide-vue-next";
 
@@ -16,6 +17,18 @@ const props = defineProps<{
 
 const workspaceStore = useWorkspaceStore();
 const terminalStore = useTerminalStore();
+const uiStore = useUIStore();
+
+/** Double-clicking the group header enters Focus Mode staged with this group's
+ * terminals -- the fast "focus this group" path. */
+function focusGroup(): void {
+  const ids = props.data.group.terminalIds;
+  if (ids.length === 0) {
+    uiStore.showToast("This group has no terminals to focus");
+    return;
+  }
+  uiStore.enterFocus(ids);
+}
 
 const GROUP_COLORS = [
   "#e94560",
@@ -192,8 +205,8 @@ watch(
       <span class="group-zoom-count">{{ memberCount }}</span>
     </div>
 
-    <!-- Group header: name, count, collapse toggle -->
-    <div class="group-header" :style="{ borderColor: data.group.color }">
+    <!-- Group header: name, count, collapse toggle. Double-click enters Focus. -->
+    <div class="group-header" :style="{ borderColor: data.group.color }" title="Double-click to focus this group" @dblclick.stop="focusGroup">
       <button
         class="group-color-indicator"
         title="Change group color"

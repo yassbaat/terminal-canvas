@@ -618,6 +618,10 @@ function handleKeyDown(e: KeyboardEvent): void {
     return;
   }
 
+  // Focus Mode owns its own keys (see FocusMode.vue) -- don't let canvas
+  // shortcuts (Delete, zoom, group) fire underneath the overlay.
+  if (uiStore.focusModeActive) return;
+
   // If a terminal has focus, canvas shortcuts are disabled
   if (terminalStore.focusedTerminalId) {
     if (e.key === "Escape") {

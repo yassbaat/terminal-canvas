@@ -13,6 +13,7 @@ import {
   Save,
   Group as GroupIcon,
   StickyNote,
+  Maximize2,
   Bell,
   Command,
   Sun,
@@ -180,6 +181,18 @@ function openSettings() {
 function openPalette() {
   uiStore.commandPaletteOpen = true;
 }
+
+/** Enter Focus Mode with the selected terminals, or all of them if none are
+ * selected. */
+function enterFocusMode() {
+  const selected = Array.from(terminalStore.selectedTerminalIds);
+  const ids = selected.length > 0 ? selected : terminalStore.allSessions.map((s) => s.id);
+  if (ids.length === 0) {
+    uiStore.showToast("No terminals to focus");
+    return;
+  }
+  uiStore.enterFocus(ids);
+}
 </script>
 
 <template>
@@ -220,6 +233,11 @@ function openPalette() {
       <button class="toolbar-btn" title="Add Sticky Note" @click="addStickyNote">
         <StickyNote class="toolbar-icon" :size="15" />
         <span>Note</span>
+      </button>
+
+      <button class="toolbar-btn" title="Focus Mode (Ctrl/Cmd+Shift+F) — selected terminals, or all" @click="enterFocusMode">
+        <Maximize2 class="toolbar-icon" :size="15" />
+        <span>Focus</span>
       </button>
       <!-- Sidebar/Inspector toggles used to live here; they now sit on the
            panels themselves (collapse buttons in each panel header + edge

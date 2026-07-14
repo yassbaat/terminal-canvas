@@ -25,6 +25,14 @@ export interface ActiveTerminal {
   session: TerminalSession;
   inputBuffer: string;
   lastOutputChunk: string;
+  /**
+   * Rolling capture of recent raw PTY output (escape codes included), replayed
+   * into a freshly-mounted xterm so a terminal keeps its on-screen content when
+   * it moves between the canvas and the Focus stage (see getBuffer / the
+   * terminal:getBuffer IPC and XtermView's replay-on-mount). Capped to bound
+   * memory; not perfect for complex full-screen TUIs but reconstructs the view.
+   */
+  outputBuffer: string;
   shellConfig: ShellConfig;
   spawnOptions: SpawnOptions;
   promptHistory: string[];

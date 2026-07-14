@@ -236,6 +236,67 @@ export const useUIStore = defineStore("ui", () => {
   const toastMessage = ref<string | null>(null);
   const toastTimeout = ref<ReturnType<typeof setTimeout> | null>(null);
 
+  // ─── Focus Mode (V2) ─────────────────────────────────────────────
+  // An immersive full-screen "stage" showing a curated subset of terminals in
+  // an auto-grid. Terminals never leave the canvas -- the Focus Set is just an
+  // ordered list of ids to display, so exiting snaps straight back with no
+  // ownership/sync complexity (single source of truth stays the canvas).
+  const FOCUS_PER_SCREEN_KEY = "terminal-canvas:focus-per-screen";
+  const focusModeActive = ref(false);
+  const focusSet = ref<string[]>([]);
+  const focusPerScreen = ref(readStoredWidth(FOCUS_PER_SCREEN_KEY, 2));
+  const focusPage = ref(0);
+  // Which staged terminal's memory panel is open (null = hidden, the default).
+  const focusMemoryTerminalId = ref<string | null>(null);
+
+  function isInFocusSet(id: string): boolean {
+    return focusSet.value.includes(id);
+  }
+
+  /** Stage the given terminals and open the full-screen focus view. */
+  function enterFocus(ids: string[]): void {
+    const unique = Array.from(new Set(ids)).filter(Boolean);
+    if (unique.length === 0) return;
+    focusSet.value = unique;
+    focusPage.value = 0;
+    focusMemoryTerminalId.value = null;
+    focusModeActive.value = true;
+  }
+
+  function exitFocus(): void {
+    focusModeActive.value = false;
+    focusMemoryTerminalId.value = null;
+  }
+
+  function addToFocus(id: string): void {
+    if (!focusSet.value.includes(id)) focusSet.value = [...focusSet.value, id];
+  }
+
+  function removeFromFocus(id: string): void {
+    focusSet.value = focusSet.value.filter((x) => x !== id);
+    if (focusSet.value.length === 0) exitFocus();
+  }
+
+  /** How many terminals to show per screen/page (1 for small displays, up to 6). */
+  function setFocusPerScreen(n: number): void {
+    focusPerScreen.value = Math.max(1, Math.min(6, Math.round(n)));
+    localStorage.setItem(FOCUS_PER_SCREEN_KEY, String(focusPerScreen.value));
+    focusPage.value = 0;
+  }
+
+  const focusPageCount = computed(() =>
+    Math.max(1, Math.ceil(focusSet.value.length / focusPerScreen.value))
+  );
+
+  function setFocusPage(p: number): void {
+    focusPage.value = Math.max(0, Math.min(focusPageCount.value - 1, p));
+  }
+
+  /** Toggle the memory side-panel for a staged terminal. */
+  function toggleFocusMemory(id: string): void {
+    focusMemoryTerminalId.value = focusMemoryTerminalId.value === id ? null : id;
+  }
+
   // ─── Canvas Pan Mode ─────────────────────────────────────────────
   // Whether the pan modifier (Shift/Space) is currently held. Lives here
   // (rather than as a local ref in WorkspaceCanvas.vue) so other components
@@ -393,6 +454,12 @@ export const useUIStore = defineStore("ui", () => {
     hoveredTerminalId,
     hoveredLayerId,
     minimapHighlightId,
+    focusModeActive,
+    focusSet,
+    focusPerScreen,
+    focusPage,
+    focusPageCount,
+    focusMemoryTerminalId,
     homeVisible,
     isPanKeyPressed,
     commandPaletteOpen,
@@ -423,6 +490,14 @@ export const useUIStore = defineStore("ui", () => {
     revealNewItem,
     setHoveredTerminal,
     setHoveredLayer,
+    isInFocusSet,
+    enterFocus,
+    exitFocus,
+    addToFocus,
+    removeFromFocus,
+    setFocusPerScreen,
+    setFocusPage,
+    toggleFocusMemory,
     showHome,
     hideHome,
     openCommandPalette,

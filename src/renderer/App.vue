@@ -14,6 +14,7 @@ import NewTerminalDialog from "@renderer/component/dialog/NewTerminalDialog.vue"
 import SettingsDialog from "@renderer/component/dialog/SettingsDialog.vue";
 import OnboardingDialog from "@renderer/component/dialog/OnboardingDialog.vue";
 import CommandPalette from "@renderer/component/dialog/CommandPalette.vue";
+import FocusMode from "@renderer/component/focus/FocusMode.vue";
 import { PanelLeftOpen, PanelRightOpen } from "lucide-vue-next";
 
 const terminalStore = useTerminalStore();
@@ -33,6 +34,25 @@ watch(
   { immediate: true }
 );
 
+// Take the window to true OS full-screen while Focus Mode is active (and back
+// out on exit). Requested from a click/keydown-driven state change, so user
+// activation is still present; failures are non-fatal (the overlay fills the
+// window regardless).
+watch(
+  () => uiStore.focusModeActive,
+  (active) => {
+    try {
+      if (active && !document.fullscreenElement) {
+        void document.documentElement.requestFullscreen?.();
+      } else if (!active && document.fullscreenElement) {
+        void document.exitFullscreen?.();
+      }
+    } catch {
+      // ignore -- non-fatal
+    }
+  }
+);
+
 /**
  * Global keyboard shortcuts handler.
  * Canvas-level shortcuts are only active when no terminal is focused.
@@ -48,6 +68,10 @@ function handleKeyDown(e: KeyboardEvent): void {
   ) {
     return;
   }
+
+  // Focus Mode handles its own keys (Esc, paging); skip the app/canvas
+  // shortcuts while it's active.
+  if (uiStore.focusModeActive) return;
 
   // If a terminal is focused, only handle Esc to unfocus it
   if (terminalStore.focusedTerminalId) {
@@ -88,6 +112,19 @@ function handleKeyDown(e: KeyboardEvent): void {
   // Ctrl+Shift+P: Command palette
   if ((e.key === "P" || e.key === "p") && mod && e.shiftKey) {
     uiStore.toggleCommandPalette();
+    e.preventDefault();
+    return;
+  }
+
+  // Ctrl/Cmd+Shift+F: enter Focus Mode with the selected terminals (or all).
+  if ((e.key === "F" || e.key === "f") && mod && e.shiftKey) {
+    const selected = Array.from(terminalStore.selectedTerminalIds);
+    const ids = selected.length > 0 ? selected : terminalStore.allSessions.map((s) => s.id);
+    if (ids.length === 0) {
+      uiStore.showToast("No terminals to focus");
+    } else {
+      uiStore.enterFocus(ids);
+    }
     e.preventDefault();
     return;
   }
@@ -279,6 +316,9 @@ onUnmounted(() => {
       <!-- Bottom status bar -->
       <Statusbar class="app-statusbar" />
     </template>
+
+    <!-- Focus Mode (V2): immersive full-screen stage overlay -->
+    <FocusMode v-if="uiStore.focusModeActive" />
 
     <!-- Dialogs -->
     <NewTerminalDialog v-model:open="uiStore.newTerminalDialogOpen" />

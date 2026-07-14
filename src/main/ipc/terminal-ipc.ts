@@ -83,6 +83,15 @@ export function registerTerminalIPC(window: BrowserWindow): void {
     }
   });
 
+  ipcMain.handle("terminal:getBuffer", async (_, { terminalId }) => {
+    try {
+      return terminalManager.getBuffer(terminalId);
+    } catch (error) {
+      logger.error(`IPC: terminal:getBuffer failed for ${terminalId}`, error);
+      return "";
+    }
+  });
+
   ipcMain.handle("terminal:setIdleThreshold", async (_, { ms }) => {
     try {
       terminalManager.setIdleThresholdMs(ms);

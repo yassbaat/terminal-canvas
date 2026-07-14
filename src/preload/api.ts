@@ -26,6 +26,7 @@ const terminal: TerminalAPI = {
   clear: (terminalId) => ipcRenderer.invoke("terminal:clear", { terminalId }),
   listShells: () => ipcRenderer.invoke("terminal:listShells"),
   openCwdInExplorer: (terminalId) => ipcRenderer.invoke("terminal:openCwdInExplorer", { terminalId }),
+  getBuffer: (terminalId) => ipcRenderer.invoke("terminal:getBuffer", { terminalId }),
   setIdleThreshold: (ms) => ipcRenderer.invoke("terminal:setIdleThreshold", { ms }),
   setIdleDetectionEnabled: (terminalId, enabled) =>
     ipcRenderer.invoke("terminal:setIdleDetectionEnabled", { terminalId, enabled }),
