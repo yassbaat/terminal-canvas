@@ -36,12 +36,35 @@ watch(isCollapsed, (val) => {
   workspaceStore.updateGroup(props.id, { collapsed: val });
 });
 
-// Computed style for the group container
-const groupStyle = computed(() => ({
-  width: `${props.data.group.width}px`,
-  height: isCollapsed.value ? "auto" : `${props.data.group.height}px`,
-  borderColor: props.data.group.color || "var(--tc-border-color)",
-}));
+// Zoom awareness so groups stay legible when the canvas is zoomed far out.
+const zoom = computed(() => workspaceStore.viewport.zoom || 1);
+const zoomedOut = computed(() => zoom.value < 0.5);
+// A readable label overlay appears once the real (canvas-space) header text
+// has shrunk to an illegible size. Counter-scaled by 1/zoom so it holds a
+// constant on-screen size no matter how far out you are.
+const showZoomLabel = computed(() => zoomedOut.value && !isCollapsed.value);
+const inverseZoom = computed(() => 1 / zoom.value);
+
+// Computed style for the group container. When zoomed out we thicken the
+// border (counter-scaled to a constant ~2px on screen), switch it to solid,
+// and tint the fill with the group color so each group reads as a distinct,
+// clearly-bounded block from a distance instead of a faint dashed rectangle.
+const groupStyle = computed(() => {
+  const color = props.data.group.color || "var(--tc-border-color)";
+  const base: Record<string, string> = {
+    width: `${props.data.group.width}px`,
+    height: isCollapsed.value ? "auto" : `${props.data.group.height}px`,
+    borderColor: color,
+  };
+  if (zoomedOut.value) {
+    base.borderWidth = `${Math.max(2, Math.min(30, 2 / zoom.value))}px`;
+    base.borderStyle = "solid";
+    if (props.data.group.color) {
+      base.background = `color-mix(in srgb, ${props.data.group.color} 16%, var(--tc-group-bg))`;
+    }
+  }
+  return base;
+});
 
 // Combined member count shown on the header badge (terminals + notes)
 const memberCount = computed(() => props.data.group.terminalIds.length + props.data.group.noteIds.length);
@@ -109,7 +132,12 @@ watch(
       workspaceStore.updateGroup(props.id, { x: pos.x, y: pos.y });
       const dx = oldPos ? pos.x - oldPos.x : 0;
       const dy = oldPos ? pos.y - oldPos.y : 0;
-      if (dx !== 0 || dy !== 0) {
+      // Only pull members along when the FRAME itself is being dragged by the
+      // user (props.dragging). The frame's position also changes
+      // programmatically when a member is dragged and the group travels with
+      // it (see WorkspaceCanvas.handleNodeDrag) -- in that case the siblings
+      // are already moved there, so running this too would double-shift them.
+      if (props.dragging && (dx !== 0 || dy !== 0)) {
         for (const tid of props.data.group.terminalIds) {
           // When the group is being dragged as part of a multi-selection,
           // Vue Flow already moves the selected terminals. Skip them to
@@ -148,6 +176,22 @@ watch(
     :style="groupStyle"
   >
     <NodeResizer v-if="!isCollapsed" :min-width="220" :min-height="120" :line-style="{ borderColor: data.group.color }" :handle-style="{ backgroundColor: data.group.color }" />
+
+    <!-- Readable, counter-scaled label shown only when zoomed far out, so a
+         group is still identifiable when its real header text is illegibly
+         small. -->
+    <div
+      v-if="showZoomLabel"
+      class="group-zoom-label"
+      :style="{
+        transform: `scale(${inverseZoom})`,
+        background: data.group.color || 'var(--tc-bg-card)',
+      }"
+    >
+      <span class="group-zoom-name">{{ data.group.name }}</span>
+      <span class="group-zoom-count">{{ memberCount }}</span>
+    </div>
+
     <!-- Group header: name, count, collapse toggle -->
     <div class="group-header" :style="{ borderColor: data.group.color }">
       <button
@@ -247,6 +291,45 @@ watch(
 .group-node.collapsed {
   min-height: 44px;
   height: auto !important;
+}
+
+/* Zoomed-out label overlay: anchored to the group's top-left corner and
+   counter-scaled inline so it stays a constant, readable on-screen size. */
+.group-zoom-label {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 6;
+  transform-origin: left top;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 260px;
+  padding: 5px 10px;
+  border-radius: var(--tc-border-radius-sm);
+  box-shadow: var(--tc-shadow-md);
+  pointer-events: none;
+}
+
+.group-zoom-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.group-zoom-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 1px 7px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .group-header {

@@ -14,6 +14,7 @@ import NewTerminalDialog from "@renderer/component/dialog/NewTerminalDialog.vue"
 import SettingsDialog from "@renderer/component/dialog/SettingsDialog.vue";
 import OnboardingDialog from "@renderer/component/dialog/OnboardingDialog.vue";
 import CommandPalette from "@renderer/component/dialog/CommandPalette.vue";
+import { PanelLeftOpen, PanelRightOpen } from "lucide-vue-next";
 
 const terminalStore = useTerminalStore();
 const promptStore = usePromptStore();
@@ -77,8 +78,9 @@ function handleKeyDown(e: KeyboardEvent): void {
 
   // Ctrl+S: Save workspace
   if (e.key === "s" && mod && !e.shiftKey) {
-    workspaceStore.saveCurrentWorkspace();
-    uiStore.showToast("Workspace saved");
+    workspaceStore.saveCurrentWorkspace().then((ok) => {
+      if (ok) uiStore.showToast("Workspace saved");
+    });
     e.preventDefault();
     return;
   }
@@ -248,6 +250,24 @@ onUnmounted(() => {
         />
         <div class="app-canvas-area">
           <WorkspaceCanvas class="app-canvas" />
+          <!-- Edge re-open tabs: appear only when a panel is collapsed, right
+               where that panel would slide back in from. -->
+          <button
+            v-show="!uiStore.sidebarVisible"
+            class="panel-reopen panel-reopen-left"
+            title="Show sidebar"
+            @click="uiStore.toggleSidebar()"
+          >
+            <PanelLeftOpen :size="16" />
+          </button>
+          <button
+            v-show="!uiStore.inspectorVisible"
+            class="panel-reopen panel-reopen-right"
+            title="Show inspector"
+            @click="uiStore.toggleInspector()"
+          >
+            <PanelRightOpen :size="16" />
+          </button>
         </div>
         <Inspector
           v-show="uiStore.inspectorVisible"
@@ -309,6 +329,43 @@ onUnmounted(() => {
   position: relative;
   overflow: hidden;
   min-width: 0;
+}
+
+/* Edge tabs that bring a collapsed sidebar/inspector back. Pinned to the
+   canvas edges (near where each panel lives) and vertically centered. */
+.panel-reopen {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 15;
+  width: 22px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--tc-bg-card);
+  border: 1px solid var(--tc-border-color);
+  color: var(--tc-text-secondary);
+  cursor: pointer;
+  transition: all var(--tc-transition-fast);
+  box-shadow: var(--tc-shadow-sm);
+}
+
+.panel-reopen:hover {
+  color: var(--tc-accent);
+  background: var(--tc-bg-hover);
+}
+
+.panel-reopen-left {
+  left: 0;
+  border-left: none;
+  border-radius: 0 var(--tc-border-radius) var(--tc-border-radius) 0;
+}
+
+.panel-reopen-right {
+  right: 0;
+  border-right: none;
+  border-radius: var(--tc-border-radius) 0 0 var(--tc-border-radius);
 }
 
 .app-canvas {

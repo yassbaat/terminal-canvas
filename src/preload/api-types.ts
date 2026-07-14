@@ -55,6 +55,8 @@ export interface GroqAPI {
   generateTerminalName(terminalId: string, context: NamingContext): Promise<GeneratedName>;
   generateGroupName(context: GroupNamingContext): Promise<GeneratedName>;
   renameTerminal(terminalId: string): Promise<void>;
+  /** Condense a long command/prompt into a short one-line summary for tooltips. */
+  summarizeCommand(text: string): Promise<string>;
   getSettings(): Promise<GroqSettings>;
   updateSettings(settings: GroqSettings): Promise<void>;
   testConnection(): Promise<{ success: boolean; message: string }>;

@@ -3,6 +3,7 @@ import { computed, ref, nextTick } from "vue";
 import type { TerminalSession } from "@renderer/type/terminal";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useUIStore } from "@renderer/store/ui";
+import { useWorkspaceStore } from "@renderer/store/workspace";
 import { shortenCwd } from "@renderer/util/path";
 import { AGENT_META } from "@renderer/util/agents";
 import { Bell, BellOff, Pencil, X, FolderOpen } from "lucide-vue-next";
@@ -20,6 +21,7 @@ const emit = defineEmits<{
 
 const terminalStore = useTerminalStore();
 const uiStore = useUIStore();
+const workspaceStore = useWorkspaceStore();
 
 const displayName = computed(
   () => props.session.manualName || props.session.autoName || props.session.name
@@ -66,6 +68,17 @@ function startRename() {
   });
 }
 
+/**
+ * Double-clicking the name renames it -- but only when zoomed in enough to be
+ * interacting with the terminal for real. When zoomed out, a double-click is
+ * claimed by the canvas to zoom/focus this terminal (see WorkspaceCanvas's
+ * handleNodeDoubleClick), so don't also pop a rename box no one can see.
+ */
+function onNameDblClick() {
+  if (workspaceStore.viewport.zoom < 0.75) return;
+  startRename();
+}
+
 function commitRename() {
   if (renameValue.value.trim()) {
     terminalStore.updateSessionName(props.session.id, renameValue.value.trim());
@@ -110,7 +123,7 @@ function toggleOffDuty() {
             @keydown.enter="commitRename"
             @keydown.esc="cancelRename"
           />
-          <span v-else class="header-name" @dblclick="startRename">
+          <span v-else class="header-name" @dblclick="onNameDblClick">
             {{ displayName }}
           </span>
           <span

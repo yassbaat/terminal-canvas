@@ -18,7 +18,11 @@ const DEFAULT_SETTINGS: WorkspaceSettings = {
   autoNameSessions: true,
   autoRunSavedCommands: false,
   defaultShellId: null,
-  defaultTerminalSize: { width: 900, height: 640 },
+  // Taller by default -- coding-agent TUIs (Claude Code, Codex, etc.) render a
+  // scrolling conversation plus a multi-line input box, so vertical room is
+  // what makes them comfortable. ~760px yields roughly 34 rows at the current
+  // font metrics, versus ~28 before.
+  defaultTerminalSize: { width: 900, height: 760 },
 };
 
 // Cycled automatically so every new group is visually distinct without the
@@ -101,8 +105,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
    * Persist the current workspace to disk via main process.
    * Syncs terminal sessions and prompt history before saving.
    */
-  async function saveCurrentWorkspace(): Promise<void> {
-    if (!currentWorkspace.value) return;
+  async function saveCurrentWorkspace(): Promise<boolean> {
+    if (!currentWorkspace.value) return false;
     isSaving.value = true;
     try {
       currentWorkspace.value.updatedAt = Date.now();
@@ -117,8 +121,21 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
       // Sync edges & sticky notes from workspace state (already in currentWorkspace)
 
-      await window.api.workspace.save({ workspace: currentWorkspace.value as Workspace });
+      // CRITICAL: `currentWorkspace.value` is a Vue reactive proxy, and Electron's
+      // IPC uses the structured-clone algorithm, which throws DataCloneError
+      // ("could not be cloned") on a Proxy. Passing it directly made EVERY save
+      // silently reject -- no file was ever written, which in turn left the
+      // Workspaces list permanently empty. Snapshot to a plain object first
+      // (same trick already used for Groq settings in SettingsDialog).
+      const snapshot = JSON.parse(JSON.stringify(currentWorkspace.value)) as Workspace;
+      await window.api.workspace.save({ workspace: snapshot });
       lastSavedAt.value = Date.now();
+      return true;
+    } catch (err) {
+      console.error("[Workspace] Save failed", err);
+      const uiStore = useUIStore();
+      uiStore.showToast("Failed to save workspace");
+      return false;
     } finally {
       isSaving.value = false;
     }

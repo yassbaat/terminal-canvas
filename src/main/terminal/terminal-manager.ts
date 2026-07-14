@@ -44,6 +44,30 @@ const TYPING_GRACE_MS = 8000;
 // than a guess.
 const MAX_IDLE_NOTIFICATIONS_PER_MINUTE = 4;
 
+// How long to wait before the SAME terminal can raise another "input" prompt
+// notification. Interactive menus redraw on every arrow-key press (the
+// highlighted row moves), so without this the same "choose an option" prompt
+// would re-fire on each redraw. Deliberately short: distinct prompts in
+// different terminals are each allowed through immediately (see
+// detectInputPrompt / the onData handler) -- the user explicitly wants every
+// blocked agent surfaced even when several land in quick succession.
+const INPUT_PROMPT_DEBOUNCE_MS = 6000;
+
+// Signals that a terminal's output is an interactive prompt actively blocked
+// on the user. Matches the common shapes coding agents and CLIs use: a
+// highlighted selection row (❯ / › / >), a yes/no confirm, an inquirer-style
+// "? question", or an explicit "press enter to continue". Kept deliberately
+// broad -- a false positive costs one extra chime; a false negative means a
+// stalled agent goes unnoticed, which is the failure mode we're fixing.
+const INPUT_PROMPT_PATTERNS: RegExp[] = [
+  /(?:^|\n)\s*[❯➜▸‣➤]\s+\S/, // highlighted selection row in a menu (agent/inquirer style)
+  /\((?:y\/n|yes\/no|y\/n\/a)\)\s*[?:：]?\s*$/im, // (y/n) style confirm at end
+  /\[(?:y\/n|yes\/no)\]\s*[?:：]?\s*$/im, // [y/n] style confirm at end
+  /\b(?:do you want to|would you like to|are you sure|ok to proceed|overwrite\??|proceed\??|continue\??)\s*[?：]/i,
+  /press\s+(?:enter|return|any key)\s+to\s+(?:continue|proceed|confirm)/i,
+  /(?:^|\n)\s*\?\s+\S.+[?:]\s*$/m, // inquirer-style "? Select ...:" prompt
+];
+
 export class TerminalManager {
   private terminals = new Map<string, ActiveTerminal>();
   private shellConfigs: ShellConfig[] = [];
@@ -127,6 +151,22 @@ export class TerminalManager {
     const lastShow = data.lastIndexOf("\x1b[?25h");
     if (lastHide === -1 && lastShow === -1) return;
     active.cursorVisible = lastShow > lastHide;
+  }
+
+  /**
+   * Does this output chunk look like an interactive prompt waiting on the
+   * user? Escape codes (colors, cursor moves, the highlight SGR on a selected
+   * menu row) are stripped first so the patterns see plain text. This is an
+   * additive signal only -- it can raise a notification but never suppress
+   * one.
+   */
+  private looksLikeInputPrompt(data: string): boolean {
+    if (!data.includes("\n") && data.length < 2) return false;
+    const clean = stripInputEscapeSequences(data);
+    // Only the tail matters for "waiting on you" prompts, and it keeps the
+    // regex work bounded on large chunks.
+    const tail = clean.length > 1200 ? clean.slice(-1200) : clean;
+    return INPUT_PROMPT_PATTERNS.some((re) => re.test(tail));
   }
 
   /**
@@ -226,7 +266,7 @@ export class TerminalManager {
         x: defaultX,
         y: defaultY,
         width: options.width ?? 900,
-        height: options.height ?? 640,
+        height: options.height ?? 760,
       },
       naming: {
         enabled: true,
@@ -281,6 +321,29 @@ export class TerminalManager {
       // ordinary typing doesn't chime.
       if (active && data.includes("\x07") && !this.wasRecentlyTyped(active)) {
         this.flagAttention(id, "bell", this.canPlayChime());
+      }
+
+      // Interactive prompt actively waiting on the user (a "choose an option"
+      // menu, a (y/n) confirm, etc.). This is the highest-priority signal: it
+      // always chimes and bypasses the idle-notification throttle entirely, so
+      // a blocked coding agent is never missed even when several prompts land
+      // in a short window. Per-terminal debounced so a menu redrawing on each
+      // arrow-key press only notifies once.
+      if (
+        active &&
+        active.session.idleDetectionEnabled &&
+        !this.wasRecentlyTyped(active) &&
+        this.looksLikeInputPrompt(data)
+      ) {
+        const sinceLast = active.lastInputPromptAt
+          ? Date.now() - active.lastInputPromptAt
+          : Infinity;
+        if (sinceLast > INPUT_PROMPT_DEBOUNCE_MS) {
+          active.lastInputPromptAt = Date.now();
+          // chime=true unconditionally -- bypasses canPlayChime()'s per-minute
+          // idle throttle. The renderer still honours the global sound-mute.
+          this.flagAttention(id, "input", true);
+        }
       }
 
       // Idle heuristic: (re)start a quiet-period timer on every chunk. If
@@ -350,6 +413,7 @@ export class TerminalManager {
       promptSeen: false,
       cursorVisible: true,
       lastInputAt: null,
+      lastInputPromptAt: null,
     };
 
     this.terminals.set(id, active);

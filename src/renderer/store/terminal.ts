@@ -91,8 +91,8 @@ export const useTerminalStore = defineStore("terminal", () => {
       rows: options.rows || 24,
       cwd: options.cwd,
       id: options.id,
-      width: options.width ?? defaultSize?.width ?? 760,
-      height: options.height ?? defaultSize?.height ?? 480,
+      width: options.width ?? defaultSize?.width ?? 900,
+      height: options.height ?? defaultSize?.height ?? 760,
     });
 
     session.activeAgent = null;
@@ -123,9 +123,12 @@ export const useTerminalStore = defineStore("terminal", () => {
     // pointer arrow, per the user's setting). Skip workspace restores --
     // those pass the saved id + explicit x/y and would otherwise fire a
     // reveal for every terminal on load.
+    // A freshly-created terminal always centers and takes focus (focus: true)
+    // regardless of the "arrow" placement preference, so the user can start
+    // typing into it immediately without hunting for it on the canvas.
     if (options.id === undefined) {
       const uiStore = useUIStore();
-      uiStore.revealNewItem({ ...session.node, id: session.id });
+      uiStore.revealNewItem({ ...session.node, id: session.id, focus: true });
     }
 
     return session;

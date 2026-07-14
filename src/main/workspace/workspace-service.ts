@@ -15,7 +15,9 @@ const DEFAULT_SETTINGS: WorkspaceSettings = {
   autoNameSessions: true,
   autoRunSavedCommands: false,
   defaultShellId: "powershell",
-  defaultTerminalSize: { width: 900, height: 640 },
+  // Taller default: coding-agent TUIs benefit most from vertical room (see the
+  // renderer's DEFAULT_SETTINGS for the rationale).
+  defaultTerminalSize: { width: 900, height: 760 },
 };
 
 /**

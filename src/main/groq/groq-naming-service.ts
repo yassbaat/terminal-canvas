@@ -67,6 +67,82 @@ export async function generateTerminalName(
 }
 
 /**
+ * Summarize a long terminal command / agent prompt into a short one-liner for
+ * the canvas hover preview and the zoomed-in info popup. Short inputs are
+ * returned mostly as-is (nothing to gain from a round-trip); long ones are
+ * condensed by the model. Input is redacted and hard-capped before sending so
+ * we never blow the model's context window or leak secrets, and any failure
+ * (no API key, network error, bad JSON) falls back to a plain truncation so
+ * the UI always has something to show.
+ */
+export async function summarizeCommand(rawText: string): Promise<string> {
+  const text = (rawText || "").trim();
+  if (text.length === 0) return "";
+
+  // Short enough to read directly -- don't spend a request on it.
+  if (text.length <= 120) return text;
+
+  // Redact secrets, then cap the input well under the model's context so an
+  // enormous pasted prompt can't overflow it.
+  const safe = redactSensitive(text).slice(0, 4000);
+
+  if (!config.apiKey) {
+    return truncateOneLine(text, 120);
+  }
+
+  try {
+    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        temperature: 0.2,
+        max_tokens: 60,
+        messages: [
+          { role: "system", content: SUMMARY_SYSTEM_PROMPT },
+          { role: "user", content: safe },
+        ],
+        response_format: { type: "json_object" },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Groq API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || "{}";
+    const parsed = JSON.parse(content);
+    const summary = truncateOneLine(String(parsed.summary || "").trim(), 120);
+    return summary || truncateOneLine(text, 120);
+  } catch (error) {
+    logger.error("Groq summarize failed, using truncation fallback", error);
+    return truncateOneLine(text, 120);
+  }
+}
+
+/** Collapse to a single line and hard-truncate with an ellipsis. */
+function truncateOneLine(text: string, max: number): string {
+  const oneLine = text.replace(/\s+/g, " ").trim();
+  return oneLine.length > max ? oneLine.slice(0, max - 1).trimEnd() + "…" : oneLine;
+}
+
+const SUMMARY_SYSTEM_PROMPT = `You compress a single long terminal command or coding-agent prompt into one short, plain-English summary line for a compact UI tooltip. Return only strict JSON.
+
+Rules:
+- One sentence, at most ~12 words.
+- Capture the intent/action, not every detail.
+- No secrets, paths, usernames, or tokens.
+- No emojis, no quotes except inside the JSON.
+- Return JSON only:
+{
+  "summary": "..."
+}`;
+
+/**
  * Deterministic fallback naming when Groq is unavailable or fails.
  */
 function fallbackName(context: NamingContext): GeneratedName {

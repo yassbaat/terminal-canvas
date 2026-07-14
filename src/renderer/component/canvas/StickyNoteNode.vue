@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watch, onMounted, onBeforeUnmount } from "vue";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
+import type { StickyNote } from "@renderer/type/workspace";
 import { NodeResizer } from "@vue-flow/node-resizer";
-import { Pin, PinOff, Palette, X, Type } from "lucide-vue-next";
+import { Pin, PinOff, Palette, X, Type, Plus, Minus } from "lucide-vue-next";
 
 const NOTE_COLORS = [
   { bg: "#fef3c7", border: "#f59e0b", text: "#92400e" }, // amber
@@ -19,7 +20,7 @@ const TITLE_MAX_LENGTH = 40;
 
 const props = defineProps<{
   id: string;
-  data: { note: { id: string; text: string; colorIndex?: number; pinnedToTerminalId?: string | null; isTitle?: boolean } };
+  data: { note: StickyNote };
   selected?: boolean;
   dragging?: boolean;
 }>();
@@ -33,6 +34,21 @@ const textareaRef = ref<HTMLTextAreaElement | HTMLInputElement | null>(null);
 
 const note = computed(() => props.data.note);
 const isTitle = computed(() => note.value.isTitle === true);
+
+// ─── Normal-note body font size (+/- controls) ───────────────────
+const DEFAULT_NOTE_FONT = 13;
+const MIN_NOTE_FONT = 10;
+const MAX_NOTE_FONT = 30;
+const fontSize = computed(() => note.value.fontSize ?? DEFAULT_NOTE_FONT);
+// Todo checkboxes scale with the text so they stay visually matched.
+const checkboxSize = computed(() => Math.round(fontSize.value * 0.95));
+
+function changeFontSize(delta: number): void {
+  const next = Math.max(MIN_NOTE_FONT, Math.min(MAX_NOTE_FONT, fontSize.value + delta));
+  if (next !== fontSize.value) {
+    workspaceStore.updateStickyNote(note.value.id, { fontSize: next });
+  }
+}
 
 const color = computed(() => {
   const idx = note.value.colorIndex ?? 0;
@@ -125,10 +141,65 @@ function toggleTodo(index: number) {
   }
   workspaceStore.updateStickyNote(note.value.id, { text: lines.join("\n") });
 }
+
+// ─── Title auto-width ─────────────────────────────────────────────
+// Grow a title note to fit its full text so it's never clipped to "Car…".
+// Width is measured off a hidden, unconstrained span that lives inside the
+// same container-query context as the visible title, so it reflects the exact
+// rendered font (which itself scales with the note's height).
+const rootRef = ref<HTMLElement | null>(null);
+const measureRef = ref<HTMLElement | null>(null);
+let titleResizeObserver: ResizeObserver | null = null;
+
+// Measure the live text while editing, the saved text otherwise, so the note
+// grows as you type the title.
+const measuredTitle = computed(() =>
+  isEditing.value ? editText.value || "Title" : note.value.text || "Title"
+);
+
+function fitTitleWidth(): void {
+  if (!isTitle.value) return;
+  const el = measureRef.value;
+  if (!el) return;
+  const needed = el.offsetWidth;
+  if (needed <= 0) return;
+  const target = Math.max(180, Math.ceil(needed) + 28); // padding + a little slack
+  const cur = note.value.width ?? 0;
+  if (Math.abs(cur - target) > 2) {
+    workspaceStore.updateStickyNote(note.value.id, { width: target });
+  }
+}
+
+function scheduleFit(): void {
+  nextTick(fitTitleWidth);
+}
+
+watch(measuredTitle, scheduleFit);
+watch(isTitle, (v) => {
+  if (v) scheduleFit();
+});
+
+onMounted(() => {
+  if (isTitle.value) scheduleFit();
+  // The title font scales with the note's height (44cqh), so a taller note has
+  // bigger text and needs a refit -- observe the node box for that.
+  if (rootRef.value && typeof ResizeObserver !== "undefined") {
+    titleResizeObserver = new ResizeObserver(() => {
+      if (isTitle.value) fitTitleWidth();
+    });
+    titleResizeObserver.observe(rootRef.value);
+  }
+});
+
+onBeforeUnmount(() => {
+  titleResizeObserver?.disconnect();
+  titleResizeObserver = null;
+});
 </script>
 
 <template>
   <div
+    ref="rootRef"
     class="sticky-note"
     :class="{ selected, dragging, 'is-title': isTitle }"
     :style="isTitle
@@ -148,6 +219,24 @@ function toggleTodo(index: number) {
         >
           <Type :size="13" />
         </button>
+        <button
+          v-if="!isTitle"
+          class="note-btn"
+          title="Smaller text"
+          :disabled="fontSize <= MIN_NOTE_FONT"
+          @click.stop="changeFontSize(-1)"
+        >
+          <Minus :size="13" />
+        </button>
+        <button
+          v-if="!isTitle"
+          class="note-btn"
+          title="Bigger text"
+          :disabled="fontSize >= MAX_NOTE_FONT"
+          @click.stop="changeFontSize(1)"
+        >
+          <Plus :size="13" />
+        </button>
         <button v-if="!isTitle" class="note-btn" title="Change color" @click.stop="cycleColor">
           <Palette :size="13" />
         </button>
@@ -163,6 +252,9 @@ function toggleTodo(index: number) {
 
     <!-- Title mode: single big line, minimal chrome -->
     <div v-if="isTitle" class="note-title-body" @click.stop="startEdit">
+      <!-- Hidden, unconstrained twin used only to measure the title's true
+           width so the node can grow to fit it (never truncates to "Car…"). -->
+      <span ref="measureRef" class="note-title-measure" aria-hidden="true">{{ measuredTitle }}</span>
       <input
         v-if="isEditing"
         ref="textareaRef"
@@ -184,20 +276,21 @@ function toggleTodo(index: number) {
         ref="textareaRef"
         v-model="editText"
         class="note-textarea"
-        :style="{ color: color.text }"
+        :style="{ color: color.text, fontSize: fontSize + 'px' }"
         @blur="saveEdit"
         @keydown.enter.ctrl.stop="saveEdit"
         @click.stop
       />
     </div>
     <div v-else class="note-body" @click.stop="startEdit">
-      <div v-if="!note.text" class="note-text note-placeholder">Click to add text...</div>
-      <div v-else class="note-text">
+      <div v-if="!note.text" class="note-text note-placeholder" :style="{ fontSize: fontSize + 'px' }">Click to add text...</div>
+      <div v-else class="note-text" :style="{ fontSize: fontSize + 'px' }">
         <div v-for="(line, i) in displayLines" :key="i" class="note-line">
           <label v-if="line.isTodo" class="todo-line">
             <input
               type="checkbox"
               :checked="line.checked"
+              :style="{ width: checkboxSize + 'px', height: checkboxSize + 'px' }"
               @click.stop
               @change="toggleTodo(i)"
             />
@@ -265,6 +358,22 @@ function toggleTodo(index: number) {
   text-overflow: ellipsis;
   width: 100%;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+/* Off-screen twin of the title used purely for width measurement: same font
+   metrics as .note-title-text but unconstrained, so its offsetWidth is the
+   text's true natural width. */
+.note-title-measure {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+  left: 0;
+  top: 0;
+  font-size: clamp(20px, 44cqh, 160px);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
 }
 
 .note-title-input {
@@ -379,6 +488,14 @@ function toggleTodo(index: number) {
   margin: 0;
   flex-shrink: 0;
   cursor: pointer;
+  /* Sized inline (checkboxSize) so it tracks the note's text size; tint it to
+     match the note's own color scheme. */
+  accent-color: currentColor;
+}
+
+.note-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .todo-line span {

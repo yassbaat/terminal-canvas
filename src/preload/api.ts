@@ -96,6 +96,7 @@ const groq: GroqAPI = {
   generateGroupName: (context) =>
     ipcRenderer.invoke("groq:generateGroupName", { context }),
   renameTerminal: (terminalId) => ipcRenderer.invoke("groq:renameTerminal", { terminalId }),
+  summarizeCommand: (text) => ipcRenderer.invoke("groq:summarizeCommand", { text }),
   getSettings: () => ipcRenderer.invoke("groq:getSettings"),
   updateSettings: (settings) => ipcRenderer.invoke("groq:updateSettings", { settings }),
   testConnection: () => ipcRenderer.invoke("groq:testConnection"),

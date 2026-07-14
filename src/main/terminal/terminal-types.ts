@@ -44,4 +44,10 @@ export interface ActiveTerminal {
   cursorVisible: boolean;
   /** When the user last actually typed into this terminal (see TYPING_GRACE_MS in terminal-manager.ts). */
   lastInputAt: number | null;
+  /**
+   * When this terminal was last flagged for an interactive-input prompt (see
+   * detectInputPrompt in terminal-manager.ts). Used to debounce the same menu
+   * re-rendering (arrow-key redraws) into a single notification.
+   */
+  lastInputPromptAt: number | null;
 }

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref, watch, onUnmounted } from "vue";
 import type { TerminalSession } from "@renderer/type/terminal";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useUIStore } from "@renderer/store/ui";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { usePromptStore } from "@renderer/store/prompt";
+import { useSummaryStore } from "@renderer/store/summary";
 import { Handle, Position } from "@vue-flow/core";
 import { NodeResizer } from "@vue-flow/node-resizer";
 import { AGENT_META } from "@renderer/util/agents";
@@ -32,6 +33,7 @@ const terminalStore = useTerminalStore();
 const uiStore = useUIStore();
 const workspaceStore = useWorkspaceStore();
 const promptStore = usePromptStore();
+const summaryStore = useSummaryStore();
 
 // Local state
 // Hidden by default -- most terminals don't need it open all the time, and
@@ -54,6 +56,38 @@ const lastPrompt = computed(() => {
     .filter((p) => p.status !== "deleted");
   if (prompts.length === 0) return null;
   return [...prompts].sort((a, b) => b.submittedAt - a.submittedAt)[0].text;
+});
+
+// What to actually render for the last command: an AI-condensed one-liner when
+// the command is long (and a summary has arrived), otherwise the text itself.
+const lastPromptDisplay = computed(() =>
+  lastPrompt.value ? summaryStore.display(lastPrompt.value) : ""
+);
+
+function handleMouseEnter(): void {
+  isHovered.value = true;
+  uiStore.setHoveredTerminal(props.id);
+  // Warm the AI summary so it's ready by the time the card is read.
+  if (lastPrompt.value) summaryStore.request(lastPrompt.value);
+}
+
+function handleMouseLeave(): void {
+  isHovered.value = false;
+  // Only clear if we're still the hovered one (guards against enter/leave
+  // races between adjacent nodes).
+  if (uiStore.hoveredTerminalId === props.id) uiStore.setHoveredTerminal(null);
+}
+
+// Attention badge tooltip, including the new "input" (waiting-on-you) reason.
+const attentionTitle = computed(() => {
+  switch (props.data.session.attentionReason) {
+    case "bell":
+      return "Rang the bell — click to view";
+    case "input":
+      return "Waiting for your input — click to respond";
+    default:
+      return "Looks idle — click to view";
+  }
 });
 
 // When zoomed out far enough that the terminal's own text is illegible,
@@ -112,6 +146,10 @@ async function handleClear(): Promise<void> {
   await terminalStore.clearTerminal(props.id);
 }
 
+onUnmounted(() => {
+  if (uiStore.hoveredTerminalId === props.id) uiStore.setHoveredTerminal(null);
+});
+
 // Watch for dimension changes and resize terminal accordingly
 watch(
   () => props.dimensions,
@@ -132,8 +170,8 @@ watch(
   <div
     class="terminal-node"
     :class="{ selected, focused: isFocused, dragging, 'needs-attention': needsAttention }"
-    @mouseenter="isHovered = true"
-    @mouseleave="isHovered = false"
+    @mouseenter="handleMouseEnter"
+    @mouseleave="handleMouseLeave"
   >
     <Handle type="target" :position="Position.Top" />
     <NodeResizer :min-width="300" :min-height="200" />
@@ -153,13 +191,14 @@ watch(
         />
         {{ displayName }}
       </div>
-      <div v-if="lastPrompt" class="hover-preview-prompt">{{ lastPrompt }}</div>
+      <div v-if="lastPrompt" class="hover-preview-prompt">{{ lastPromptDisplay }}</div>
       <div v-else class="hover-preview-prompt hover-preview-empty">No prompts yet</div>
     </div>
     <button
       v-if="needsAttention"
       class="attention-badge"
-      :title="data.session.attentionReason === 'bell' ? 'Rang the bell — click to view' : 'Looks idle — click to view'"
+      :class="{ 'attention-badge-input': data.session.attentionReason === 'input' }"
+      :title="attentionTitle"
       @click.stop="acknowledgeAttention"
     >
       <Bell :size="13" />
@@ -295,6 +334,34 @@ watch(
   box-shadow: 0 0 0 2px var(--tc-accent), var(--tc-shadow-lg);
 }
 
+/* Figma-style selection: the whole header bar turns accent-colored so a
+   selected terminal is unmistakable at a glance -- not just a thin ring around
+   the card. Targets the child TerminalHeader's scoped elements via :deep. */
+.terminal-node.selected :deep(.terminal-header) {
+  background: var(--tc-accent);
+  border-bottom-color: color-mix(in srgb, var(--tc-accent) 65%, black);
+}
+
+.terminal-node.selected :deep(.header-name),
+.terminal-node.selected :deep(.header-cwd),
+.terminal-node.selected :deep(.header-btn) {
+  color: #fff;
+}
+
+.terminal-node.selected :deep(.header-shell-badge) {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.terminal-node.selected :deep(.header-btn:hover) {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+
+.terminal-node.selected :deep(.header-name:hover) {
+  text-decoration-color: #fff;
+}
+
 .terminal-node.focused .terminal-node-inner {
   box-shadow: 0 0 0 1px var(--tc-accent-soft), var(--tc-shadow-md);
 }
@@ -341,6 +408,13 @@ watch(
 
 .attention-badge:hover {
   filter: brightness(1.1);
+}
+
+/* "Waiting for your input" reads differently from a plain idle/bell finish:
+   accent-colored rather than the amber warning, since it's an active block. */
+.attention-badge-input {
+  background: var(--tc-accent);
+  color: #fff;
 }
 
 .terminal-agent-accent {

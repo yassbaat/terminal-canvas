@@ -53,6 +53,8 @@ export interface StickyNote {
   groupId?: string | null;
   /** Render as a big canvas title/label (large text, minimal chrome, legible when zoomed way out) rather than a normal note. */
   isTitle?: boolean;
+  /** Body text size in px for normal notes (user-adjustable via +/- ). Defaults to the small font when unset. */
+  fontSize?: number;
   createdAt: number;
   updatedAt: number;
 }

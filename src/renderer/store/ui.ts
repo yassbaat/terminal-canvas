@@ -15,6 +15,12 @@ export interface RevealTarget {
   width: number;
   height: number;
   id?: string;
+  /**
+   * Force center-and-focus regardless of the user's newItemPlacement setting.
+   * Set for freshly-created terminals so the user can start typing immediately
+   * (the "arrow" placement mode still applies to notes and other items).
+   */
+  focus?: boolean;
   /** Bumped every request so identical positions still re-trigger the watcher. */
   nonce: number;
 }
@@ -97,9 +103,33 @@ export const useUIStore = defineStore("ui", () => {
   // Vue Flow instance that can actually move the viewport.
   const revealTarget = ref<RevealTarget | null>(null);
 
-  function revealNewItem(rect: { x: number; y: number; width: number; height: number; id?: string }): void {
+  function revealNewItem(rect: { x: number; y: number; width: number; height: number; id?: string; focus?: boolean }): void {
     revealTarget.value = { ...rect, nonce: Date.now() };
   }
+
+  // ─── Canvas / Layers Hover ───────────────────────────────────────
+  // The terminal node the pointer is currently over on the canvas. Drives the
+  // hovered node's z-index lift (so its hover card isn't obstructed by
+  // neighbours), the zoomed-in info popup, and the minimap highlight.
+  const hoveredTerminalId = ref<string | null>(null);
+  // The layer item (terminal/group/note) the pointer is over in the sidebar
+  // Layers list. Drives the minimap highlight so hovering the list shows you
+  // where that item lives on the canvas.
+  const hoveredLayerId = ref<string | null>(null);
+
+  function setHoveredTerminal(id: string | null): void {
+    hoveredTerminalId.value = id;
+  }
+
+  function setHoveredLayer(id: string | null): void {
+    hoveredLayerId.value = id;
+  }
+
+  /** The item to highlight on the minimap: an explicitly-hovered layer wins,
+   * otherwise the hovered canvas node. */
+  const minimapHighlightId = computed(
+    () => hoveredLayerId.value ?? hoveredTerminalId.value
+  );
 
   // ─── Theme ───────────────────────────────────────────────────────
   const storedThemePref = localStorage.getItem(THEME_STORAGE_KEY);
@@ -360,6 +390,9 @@ export const useUIStore = defineStore("ui", () => {
     headerStyle,
     newItemPlacement,
     revealTarget,
+    hoveredTerminalId,
+    hoveredLayerId,
+    minimapHighlightId,
     homeVisible,
     isPanKeyPressed,
     commandPaletteOpen,
@@ -388,6 +421,8 @@ export const useUIStore = defineStore("ui", () => {
     setHeaderStyle,
     setNewItemPlacement,
     revealNewItem,
+    setHoveredTerminal,
+    setHoveredLayer,
     showHome,
     hideHome,
     openCommandPalette,

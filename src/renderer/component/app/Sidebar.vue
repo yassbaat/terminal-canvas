@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from "vue";
+import { computed, watch, ref, nextTick } from "vue";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useUIStore } from "@renderer/store/ui";
@@ -7,7 +7,7 @@ import { shortenCwd } from "@renderer/util/path";
 import { AGENT_META } from "@renderer/util/agents";
 import { useResizeHandle } from "@renderer/composable/useResizeHandle";
 import { useVueFlow } from "@vue-flow/core";
-import { Folder, StickyNote, Bell, X } from "lucide-vue-next";
+import { Folder, StickyNote, Bell, X, PanelLeftClose } from "lucide-vue-next";
 
 const terminalStore = useTerminalStore();
 const workspaceStore = useWorkspaceStore();
@@ -80,6 +80,36 @@ async function killTerminal(id: string) {
   terminalStore.removeSession(id);
 }
 
+/** Hovering a layer row highlights the matching node on the minimap so the
+ * user can see where it lives on the canvas. */
+function onLayerEnter(id: string): void {
+  uiStore.setHoveredLayer(id);
+}
+function onLayerLeave(id: string): void {
+  if (uiStore.hoveredLayerId === id) uiStore.setHoveredLayer(null);
+}
+
+/** True when a terminal is being hovered on the canvas (drives a subtle Layers
+ * highlight, distinct from the selection colour). */
+function isCanvasHovered(id: string): boolean {
+  return uiStore.hoveredTerminalId === id;
+}
+
+// Keep the focused/navigated terminal visible in the Layers list -- stepping
+// through terminals with the toolbar arrows (which focus + select) scrolls its
+// row into view so the highlight is always on screen.
+const sidebarRootRef = ref<HTMLElement | null>(null);
+watch(
+  () => terminalStore.focusedTerminalId,
+  (id) => {
+    if (!id || uiStore.sidebarTab !== "layers") return;
+    nextTick(() => {
+      const el = sidebarRootRef.value?.querySelector(`[data-layer-terminal="${id}"]`);
+      el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }
+);
+
 function isTerminalSelected(id: string): boolean {
   return terminalStore.selectedTerminalIds.has(id);
 }
@@ -102,7 +132,7 @@ function handleLayerClick(
   id: string,
   event: MouseEvent
 ): void {
-  const isMulti = event.ctrlKey || event.metaKey;
+  const isMulti = event.ctrlKey || event.metaKey || event.shiftKey;
 
   if (type === "terminal") {
     if (isMulti) {
@@ -114,8 +144,9 @@ function handleLayerClick(
     }
     // Note: deliberately NOT calling terminalStore.setFocused(id) here.
     // Selecting a terminal from the Layers list is for highlighting/grouping
-    // (e.g. select several, then Ctrl+G) -- it must not steal keyboard focus
-    // into that terminal, which would silently disable canvas shortcuts.
+    // (e.g. select several, then Ctrl+G / Shift+click) -- it must not steal
+    // keyboard focus into that terminal, which would silently disable canvas
+    // shortcuts.
   } else if (type === "note") {
     if (isMulti) {
       workspaceStore.toggleNoteSelected(id);
@@ -137,7 +168,7 @@ function handleLayerClick(
 </script>
 
 <template>
-  <div class="sidebar">
+  <div ref="sidebarRootRef" class="sidebar">
     <div class="sidebar-tabs">
       <button
         class="sidebar-tab"
@@ -153,6 +184,13 @@ function handleLayerClick(
         @click="activeTab = 'workspaces'"
       >
         Workspaces
+      </button>
+      <button
+        class="sidebar-collapse-btn"
+        title="Collapse sidebar"
+        @click="uiStore.toggleSidebar()"
+      >
+        <PanelLeftClose :size="15" />
       </button>
     </div>
 
@@ -172,6 +210,8 @@ function handleLayerClick(
           class="layer-item group-layer"
           :class="{ selected: isGroupSelected(group.id) }"
           @click="handleLayerClick('group', group.id, $event)"
+          @mouseenter="onLayerEnter(group.id)"
+          @mouseleave="onLayerLeave(group.id)"
         >
           <div class="layer-row">
             <Folder class="layer-icon" :size="12" />
@@ -183,9 +223,12 @@ function handleLayerClick(
             v-for="tid in group.terminalIds"
             :key="tid"
             class="layer-item terminal-layer nested"
-            :class="{ selected: isTerminalSelected(tid) }"
+            :class="{ selected: isTerminalSelected(tid), 'canvas-hovered': isCanvasHovered(tid) }"
+            :data-layer-terminal="tid"
             @click.stop="handleLayerClick('terminal', tid, $event)"
             @dblclick.stop="navigateToTerminal(tid)"
+            @mouseenter="onLayerEnter(tid)"
+            @mouseleave="onLayerLeave(tid)"
           >
             <div class="layer-row">
               <span class="layer-status-dot" :class="terminalStore.sessions.get(tid)?.status" />
@@ -210,10 +253,14 @@ function handleLayerClick(
           class="layer-item terminal-layer"
           :class="{
             selected: isTerminalSelected(session.id),
+            'canvas-hovered': isCanvasHovered(session.id),
             exited: session.status === 'exited' || session.status === 'crashed'
           }"
+          :data-layer-terminal="session.id"
           @click="handleLayerClick('terminal', session.id, $event)"
           @dblclick="navigateToTerminal(session.id)"
+          @mouseenter="onLayerEnter(session.id)"
+          @mouseleave="onLayerLeave(session.id)"
         >
           <div class="layer-row">
             <span class="layer-status-dot" :class="`status-${session.status}`" />
@@ -244,6 +291,8 @@ function handleLayerClick(
           class="layer-item note-layer"
           :class="{ selected: isNoteSelected(note.id) }"
           @click="handleLayerClick('note', note.id, $event)"
+          @mouseenter="onLayerEnter(note.id)"
+          @mouseleave="onLayerLeave(note.id)"
         >
           <div class="layer-row">
             <StickyNote class="layer-icon" :size="12" />
@@ -308,6 +357,26 @@ function handleLayerClick(
   display: flex;
   border-bottom: 1px solid var(--tc-border-color);
   flex-shrink: 0;
+}
+
+.sidebar-collapse-btn {
+  flex-shrink: 0;
+  width: 34px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: transparent;
+  color: var(--tc-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--tc-transition-fast);
+}
+
+.sidebar-collapse-btn:hover {
+  color: var(--tc-text-primary);
+  background: var(--tc-bg-hover);
 }
 
 .sidebar-tab {
@@ -392,6 +461,15 @@ function handleLayerClick(
 .layer-item.selected {
   background: var(--tc-accent-soft);
   border-color: var(--tc-accent);
+}
+
+/* Subtle highlight for a terminal currently hovered on the canvas -- a neutral
+   tint + grey edge bar, deliberately NOT the accent colour used for selection,
+   so the two states stay distinguishable at a glance. */
+.layer-item.canvas-hovered:not(.selected) {
+  background: var(--tc-bg-hover);
+  border-color: var(--tc-border-color);
+  box-shadow: inset 3px 0 0 var(--tc-text-muted);
 }
 
 .layer-row {

@@ -88,6 +88,8 @@ let focusInHandler: (() => void) | null = null;
 let focusOutHandler: (() => void) | null = null;
 let wheelHandler: ((e: WheelEvent) => void) | null = null;
 let selectionCorrectionHandler: ((e: MouseEvent) => void) | null = null;
+let scrollPinHandler: (() => void) | null = null;
+let scrollPinTargets: HTMLElement[] = [];
 
 // Events xterm.js hit-tests against a click/drag position (selection start/
 // extend/end, double-click word select, right-click, link clicks).
@@ -146,6 +148,17 @@ onMounted(async () => {
   fitAddon = new FitAddon();
   xterm.loadAddon(fitAddon);
 
+  // Only let the terminal consume a wheel gesture (scroll its own scrollback)
+  // when it is the focused/active terminal. When it isn't focused, return
+  // false so xterm ignores the wheel entirely -- the event then bubbles to the
+  // canvas and pans it. This is what makes "scroll past / over a terminal I
+  // haven't clicked into" move the canvas instead of hijacking the scroll into
+  // the terminal's buffer. Pinch-zoom (ctrlKey) is always left to the canvas.
+  xterm.attachCustomWheelEventHandler((e: WheelEvent) => {
+    if (e.ctrlKey) return false;
+    return terminalStore.focusedTerminalId === props.terminalId;
+  });
+
   // Mount to DOM
   xterm.open(terminalContainer.value);
 
@@ -172,20 +185,47 @@ onMounted(async () => {
     window.api.terminal.write(props.terminalId, data);
   });
 
-  // Let the canvas pan when a scroll gesture is over this terminal, but only
-  // once the internal scrollback buffer itself has nowhere left to go --
-  // otherwise scrolling through output and panning the canvas would both
-  // happen at once from the same wheel event (removing the old blanket
-  // @wheel.stop on the node fixed panning but reopened this).
-  const viewportEl = xterm.element?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
+  // Contain the scroll to this terminal's scrollback ONLY while it is the
+  // focused/active terminal: then stopPropagation so the wheel can't also pan
+  // the canvas (no chaining at the buffer's top/bottom, even on a fast flick).
+  // When the terminal is NOT focused we deliberately do nothing here -- the
+  // event bubbles on to Vue Flow's pane and pans the canvas, while the custom
+  // wheel handler above stops xterm from scrolling its buffer. Pinch-zoom
+  // (ctrlKey) is always left alone so the canvas can zoom.
   wheelHandler = (e: WheelEvent) => {
-    if (!viewportEl) return;
-    const atTop = viewportEl.scrollTop <= 0;
-    const atBottom = viewportEl.scrollTop + viewportEl.clientHeight >= viewportEl.scrollHeight - 1;
-    const canAbsorb = (e.deltaY < 0 && !atTop) || (e.deltaY > 0 && !atBottom);
-    if (canAbsorb) e.stopPropagation();
+    if (e.ctrlKey) return;
+    if (terminalStore.focusedTerminalId === props.terminalId) {
+      e.stopPropagation();
+    }
   };
   terminalContainer.value.addEventListener("wheel", wheelHandler, { passive: true });
+
+  // Guard against the terminal "jumping to the top" when it gains focus or the
+  // user first interacts with it. Focusing xterm's hidden helper textarea (or
+  // certain re-layouts) makes the browser scroll an overflow ancestor to bring
+  // that element into view, yanking the visible content. None of these wrapper
+  // elements are meant to scroll -- only .xterm-viewport is -- so we pin their
+  // scroll offset back to 0 whenever something nudges it. viewportEl is
+  // deliberately excluded (it owns the real scrollback).
+  scrollPinTargets = [
+    terminalContainer.value,
+    terminalContainer.value.closest<HTMLElement>(".terminal-area"),
+    terminalContainer.value.closest<HTMLElement>(".terminal-node-body"),
+    xterm.element?.querySelector<HTMLElement>(".xterm-screen") ?? null,
+  ].filter((el): el is HTMLElement => el !== null);
+  scrollPinHandler = () => {
+    for (const el of scrollPinTargets) {
+      if (el.scrollTop !== 0) el.scrollTop = 0;
+      if (el.scrollLeft !== 0) el.scrollLeft = 0;
+    }
+  };
+  // Reset on focus (the browser's focus-scroll is the main culprit) and on any
+  // direct scroll of a wrapper element (scroll events don't bubble, so the
+  // listener goes on each wrapper individually).
+  terminalContainer.value.addEventListener("focusin", scrollPinHandler);
+  for (const el of scrollPinTargets) {
+    el.addEventListener("scroll", scrollPinHandler);
+  }
 
   selectionCorrectionHandler = correctPointerEventForZoom;
   for (const evt of POINTER_HITTEST_EVENTS) {
@@ -267,6 +307,15 @@ onUnmounted(() => {
   }
   if (wheelHandler && terminalContainer.value) {
     terminalContainer.value.removeEventListener("wheel", wheelHandler);
+  }
+  if (scrollPinHandler) {
+    if (terminalContainer.value) {
+      terminalContainer.value.removeEventListener("focusin", scrollPinHandler);
+    }
+    for (const el of scrollPinTargets) {
+      el.removeEventListener("scroll", scrollPinHandler);
+    }
+    scrollPinTargets = [];
   }
   if (selectionCorrectionHandler && terminalContainer.value) {
     for (const evt of POINTER_HITTEST_EVENTS) {

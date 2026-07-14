@@ -21,8 +21,13 @@ export interface TerminalNamingState {
  *   threshold, then went quiet (heuristic for "the command/agent finished").
  * - "bell" -- it emitted a BEL (\x07) character, an explicit signal many
  *   CLIs (including coding agents) send when they want your attention.
+ * - "input" -- its output looks like an interactive prompt actively waiting
+ *   on the user (a "choose an option" menu, a (y/n) confirm, "Press enter to
+ *   continue", etc.). This is the highest-priority reason: it always chimes
+ *   and bypasses the idle-notification throttle, since missing a coding agent
+ *   that's blocked waiting on you is the worst outcome (see terminal-manager).
  */
-export type AttentionReason = "idle" | "bell";
+export type AttentionReason = "idle" | "bell" | "input";
 
 export interface TerminalSession {
   id: string;

@@ -13,8 +13,6 @@ import {
   Save,
   Group as GroupIcon,
   StickyNote,
-  PanelLeft,
-  PanelRight,
   Bell,
   Command,
   Sun,
@@ -141,8 +139,8 @@ async function openFolder() {
 }
 
 async function saveWorkspace() {
-  await workspaceStore.saveCurrentWorkspace();
-  uiStore.showToast("Workspace saved");
+  const ok = await workspaceStore.saveCurrentWorkspace();
+  if (ok) uiStore.showToast("Workspace saved");
 }
 
 /** Save the current session, then hand off to the workspace launcher. */
@@ -181,14 +179,6 @@ function openSettings() {
 
 function openPalette() {
   uiStore.commandPaletteOpen = true;
-}
-
-function toggleSidebar() {
-  uiStore.sidebarVisible = !uiStore.sidebarVisible;
-}
-
-function toggleInspector() {
-  uiStore.inspectorVisible = !uiStore.inspectorVisible;
 }
 </script>
 
@@ -231,16 +221,9 @@ function toggleInspector() {
         <StickyNote class="toolbar-icon" :size="15" />
         <span>Note</span>
       </button>
-
-      <div class="toolbar-divider" />
-
-      <button class="toolbar-btn" title="Toggle Sidebar" @click="toggleSidebar">
-        <PanelLeft class="toolbar-icon" :size="15" />
-      </button>
-
-      <button class="toolbar-btn" title="Toggle Inspector" @click="toggleInspector">
-        <PanelRight class="toolbar-icon" :size="15" />
-      </button>
+      <!-- Sidebar/Inspector toggles used to live here; they now sit on the
+           panels themselves (collapse buttons in each panel header + edge
+           re-open tabs), which is where they belong. -->
     </div>
 
     <div class="toolbar-right">

@@ -1,12 +1,27 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, computed } from "vue";
 import { toRaw } from "vue";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useUIStore } from "@renderer/store/ui";
 import { useLaunchProfileStore } from "@renderer/store/launchProfile";
 import type { GroqSettings } from "@renderer/type/groq";
-import { X } from "lucide-vue-next";
+import type { ThemePreference } from "@renderer/store/ui";
+import {
+  X,
+  SlidersHorizontal,
+  Palette,
+  Bell,
+  Rocket,
+  Sparkles,
+  MonitorCog,
+  Moon,
+  Sun,
+  Monitor,
+  Plus,
+  Pencil,
+  Trash2,
+} from "lucide-vue-next";
 
 const props = defineProps<{
   open: boolean;
@@ -21,7 +36,20 @@ const workspaceStore = useWorkspaceStore();
 const uiStore = useUIStore();
 const launchProfileStore = useLaunchProfileStore();
 
-const activeTab = ref<"general" | "launch" | "groq" | "system">("general");
+type SettingsTab = "general" | "appearance" | "notifications" | "launch" | "groq" | "system";
+const activeTab = ref<SettingsTab>("general");
+
+// Left-nav configuration. System integration only surfaces the actively
+// supported platforms, but the tab itself always shows (it explains the
+// state on other platforms).
+const NAV: Array<{ id: SettingsTab; label: string; icon: unknown }> = [
+  { id: "general", label: "General", icon: SlidersHorizontal },
+  { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "launch", label: "Launch Profiles", icon: Rocket },
+  { id: "groq", label: "AI Naming", icon: Sparkles },
+  { id: "system", label: "System", icon: MonitorCog },
+];
 
 // Launch profile management
 const newProfileLabel = ref("");
@@ -62,11 +90,12 @@ function cancelEditProfile() {
 // General settings
 const defaultShellId = ref("");
 const defaultTermWidth = ref(900);
-const defaultTermHeight = ref(640);
+const defaultTermHeight = ref(760);
 
 const SIZE_PRESETS = [
   { label: "Small", width: 640, height: 480 },
   { label: "Medium", width: 900, height: 640 },
+  { label: "Agent", width: 900, height: 760 },
   { label: "Large", width: 1200, height: 840 },
 ];
 
@@ -74,6 +103,18 @@ function applySizePreset(preset: { width: number; height: number }) {
   defaultTermWidth.value = preset.width;
   defaultTermHeight.value = preset.height;
 }
+
+const sizeMatchesPreset = computed(
+  () => (preset: { width: number; height: number }) =>
+    defaultTermWidth.value === preset.width && defaultTermHeight.value === preset.height
+);
+
+// Appearance — theme
+const THEME_OPTIONS: Array<{ value: ThemePreference; label: string; icon: unknown }> = [
+  { value: "dark", label: "Dark", icon: Moon },
+  { value: "light", label: "Light", icon: Sun },
+  { value: "system", label: "System", icon: Monitor },
+];
 
 // Groq settings
 const groqSettings = ref<GroqSettings>({
@@ -107,7 +148,7 @@ onMounted(async () => {
   // Load general settings from workspace
   defaultShellId.value = workspaceStore.settings.defaultShellId || "";
   defaultTermWidth.value = workspaceStore.settings.defaultTerminalSize?.width || 900;
-  defaultTermHeight.value = workspaceStore.settings.defaultTerminalSize?.height || 640;
+  defaultTermHeight.value = workspaceStore.settings.defaultTerminalSize?.height || 760;
 
   // Check context menu status
   try {
@@ -150,10 +191,11 @@ async function saveAll() {
     defaultShellId: defaultShellId.value || null,
     defaultTerminalSize: {
       width: Math.max(300, defaultTermWidth.value || 900),
-      height: Math.max(200, defaultTermHeight.value || 640),
+      height: Math.max(200, defaultTermHeight.value || 760),
     },
   });
 
+  uiStore.showToast("Settings saved");
   close();
 }
 
@@ -207,379 +249,381 @@ async function toggleContextMenu() {
         <button class="dialog-close" @click="close"><X :size="16" /></button>
       </div>
 
-      <div class="dialog-tabs">
-        <button
-          class="dialog-tab"
-          :class="{ active: activeTab === 'general' }"
-          @click="activeTab = 'general'"
-        >
-          General
-        </button>
-        <button
-          class="dialog-tab"
-          :class="{ active: activeTab === 'launch' }"
-          @click="activeTab = 'launch'"
-        >
-          Launch Profiles
-        </button>
-        <button
-          class="dialog-tab"
-          :class="{ active: activeTab === 'groq' }"
-          @click="activeTab = 'groq'"
-        >
-          Groq
-        </button>
-        <button
-          class="dialog-tab"
-          :class="{ active: activeTab === 'system' }"
-          @click="activeTab = 'system'"
-        >
-          System Integration
-        </button>
-      </div>
+      <div class="dialog-main">
+        <!-- Left nav -->
+        <nav class="settings-nav">
+          <button
+            v-for="item in NAV"
+            :key="item.id"
+            class="settings-nav-item"
+            :class="{ active: activeTab === item.id }"
+            @click="activeTab = item.id"
+          >
+            <component :is="item.icon" :size="15" class="settings-nav-icon" />
+            <span>{{ item.label }}</span>
+          </button>
+        </nav>
 
-      <div class="dialog-body">
-        <!-- General Tab -->
-        <div v-if="activeTab === 'general'" class="tab-panel">
-          <div class="form-group">
-            <label>Default Shell</label>
-            <select v-model="defaultShellId" class="tc-input">
-              <option value="">Auto (first available)</option>
-              <option
-                v-for="shell in terminalStore.shells"
-                :key="shell.id"
-                :value="shell.id"
-              >
-                {{ shell.name }}
-              </option>
-            </select>
-            <span class="form-hint">
-              Used when creating quick terminals and during onboarding.
-            </span>
-          </div>
+        <!-- Content -->
+        <div class="settings-content">
+          <!-- General -->
+          <section v-if="activeTab === 'general'" class="settings-section">
+            <h4 class="section-title">General</h4>
 
-          <div class="form-group">
-            <label>Default Terminal Size</label>
-            <span class="form-hint">
-              The canvas box size new terminals spawn at. Terminals still
-              resize to fit whatever box size you drag them to afterward.
-            </span>
-            <div class="size-preset-row">
-              <button
-                v-for="preset in SIZE_PRESETS"
-                :key="preset.label"
-                type="button"
-                class="tc-btn"
-                :class="{
-                  'tc-btn-primary':
-                    defaultTermWidth === preset.width && defaultTermHeight === preset.height,
-                }"
-                @click="applySizePreset(preset)"
-              >
-                {{ preset.label }}
-              </button>
+            <div class="setting-block">
+              <label class="setting-label">Default shell</label>
+              <p class="setting-desc">Used when creating quick terminals and during onboarding.</p>
+              <select v-model="defaultShellId" class="tc-input">
+                <option value="">Auto (first available)</option>
+                <option v-for="shell in terminalStore.shells" :key="shell.id" :value="shell.id">
+                  {{ shell.name }}
+                </option>
+              </select>
             </div>
-            <div class="form-row" style="margin-top: 6px;">
-              <div class="form-group">
-                <label>Width (px)</label>
-                <input v-model.number="defaultTermWidth" class="tc-input" type="number" min="300" step="20" />
+
+            <div class="setting-divider" />
+
+            <div class="setting-block">
+              <label class="setting-label">Default terminal size</label>
+              <p class="setting-desc">
+                The canvas box size new terminals spawn at. You can still resize any
+                terminal by dragging afterward. "Agent" is tuned for coding-agent TUIs.
+              </p>
+              <div class="segmented">
+                <button
+                  v-for="preset in SIZE_PRESETS"
+                  :key="preset.label"
+                  type="button"
+                  class="segmented-btn"
+                  :class="{ active: sizeMatchesPreset(preset) }"
+                  @click="applySizePreset(preset)"
+                >
+                  {{ preset.label }}
+                </button>
               </div>
-              <div class="form-group">
-                <label>Height (px)</label>
-                <input v-model.number="defaultTermHeight" class="tc-input" type="number" min="200" step="20" />
-              </div>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label>Terminal Header Style</label>
-            <span class="form-hint">
-              How much detail each terminal's header bar shows.
-            </span>
-            <div class="size-preset-row">
-              <button
-                v-for="style in (['comfortable', 'compact', 'minimal'] as const)"
-                :key="style"
-                type="button"
-                class="tc-btn"
-                :class="{ 'tc-btn-primary': uiStore.headerStyle === style }"
-                @click="uiStore.setHeaderStyle(style)"
-              >
-                {{ style.charAt(0).toUpperCase() + style.slice(1) }}
-              </button>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label>When adding a terminal or note</label>
-            <span class="form-hint">
-              What the canvas does when you add a new terminal or note.
-            </span>
-            <div class="size-preset-row">
-              <button
-                type="button"
-                class="tc-btn"
-                :class="{ 'tc-btn-primary': uiStore.newItemPlacement === 'arrow' }"
-                @click="uiStore.setNewItemPlacement('arrow')"
-              >
-                Point an arrow to it
-              </button>
-              <button
-                type="button"
-                class="tc-btn"
-                :class="{ 'tc-btn-primary': uiStore.newItemPlacement === 'focus' }"
-                @click="uiStore.setNewItemPlacement('focus')"
-              >
-                Jump to it
-              </button>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label>Attention Notifications</label>
-            <span class="form-hint">
-              Flags a terminal (canvas badge, layer badge, and the bell
-              counter in the toolbar) when it's been busy for a while and
-              then goes quiet, or when it rings the terminal bell -- the
-              usual signal that a command or coding agent has finished.
-            </span>
-            <label class="form-checkbox" style="margin-top: 6px;">
-              <input
-                :checked="!uiStore.soundMuted"
-                type="checkbox"
-                @change="uiStore.setSoundMuted(!($event.target as HTMLInputElement).checked)"
-              />
-              <span>Play a sound</span>
-            </label>
-            <div class="form-row" style="margin-top: 6px;">
-              <div class="form-group">
-                <label>Notify after running for at least</label>
-                <div class="cwd-input-row">
-                  <input
-                    :value="uiStore.idleThresholdSeconds"
-                    class="tc-input"
-                    type="number"
-                    min="0"
-                    step="1"
-                    style="max-width: 90px;"
-                    @change="uiStore.setIdleThresholdSeconds(Number(($event.target as HTMLInputElement).value))"
-                  />
-                  <span class="form-hint">seconds</span>
+              <div class="field-row">
+                <div class="field">
+                  <label class="field-label">Width (px)</label>
+                  <input v-model.number="defaultTermWidth" class="tc-input" type="number" min="300" step="20" />
                 </div>
-                <span class="form-hint">
-                  Quick commands (like `ls`) never notify; only genuinely
-                  long-running ones do. Set to 0 to notify on every command.
+                <div class="field">
+                  <label class="field-label">Height (px)</label>
+                  <input v-model.number="defaultTermHeight" class="tc-input" type="number" min="200" step="20" />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Appearance -->
+          <section v-else-if="activeTab === 'appearance'" class="settings-section">
+            <h4 class="section-title">Appearance</h4>
+
+            <div class="setting-block">
+              <label class="setting-label">Theme</label>
+              <p class="setting-desc">
+                Applies to the app chrome. Terminals keep their dark palette in both
+                themes, as terminals always do.
+              </p>
+              <div class="segmented">
+                <button
+                  v-for="opt in THEME_OPTIONS"
+                  :key="opt.value"
+                  type="button"
+                  class="segmented-btn segmented-btn-icon"
+                  :class="{ active: uiStore.themePreference === opt.value }"
+                  @click="uiStore.setThemePreference(opt.value)"
+                >
+                  <component :is="opt.icon" :size="14" />
+                  <span>{{ opt.label }}</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="setting-divider" />
+
+            <div class="setting-block">
+              <label class="setting-label">Terminal header style</label>
+              <p class="setting-desc">How much detail each terminal's header bar shows.</p>
+              <div class="segmented">
+                <button
+                  v-for="style in (['comfortable', 'compact', 'minimal'] as const)"
+                  :key="style"
+                  type="button"
+                  class="segmented-btn"
+                  :class="{ active: uiStore.headerStyle === style }"
+                  @click="uiStore.setHeaderStyle(style)"
+                >
+                  {{ style.charAt(0).toUpperCase() + style.slice(1) }}
+                </button>
+              </div>
+            </div>
+
+            <div class="setting-divider" />
+
+            <div class="setting-block">
+              <label class="setting-label">When adding a terminal or note</label>
+              <p class="setting-desc">
+                What the canvas does when a new item appears. New terminals always take
+                focus so you can type right away; this controls notes and other items.
+              </p>
+              <div class="segmented">
+                <button
+                  type="button"
+                  class="segmented-btn"
+                  :class="{ active: uiStore.newItemPlacement === 'arrow' }"
+                  @click="uiStore.setNewItemPlacement('arrow')"
+                >
+                  Point an arrow to it
+                </button>
+                <button
+                  type="button"
+                  class="segmented-btn"
+                  :class="{ active: uiStore.newItemPlacement === 'focus' }"
+                  @click="uiStore.setNewItemPlacement('focus')"
+                >
+                  Jump to it
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!-- Notifications -->
+          <section v-else-if="activeTab === 'notifications'" class="settings-section">
+            <h4 class="section-title">Notifications</h4>
+
+            <div class="setting-block">
+              <p class="setting-desc">
+                Flags a terminal (canvas badge, layer badge, and the bell counter in the
+                toolbar) when a long-running command or coding agent finishes or wants
+                your attention.
+              </p>
+              <label class="toggle-row">
+                <input
+                  :checked="!uiStore.soundMuted"
+                  type="checkbox"
+                  @change="uiStore.setSoundMuted(!($event.target as HTMLInputElement).checked)"
+                />
+                <span class="toggle-text">
+                  <span class="toggle-title">Play a sound</span>
+                  <span class="toggle-sub">A soft chime when a terminal needs you.</span>
+                </span>
+              </label>
+            </div>
+
+            <div class="setting-divider" />
+
+            <div class="setting-block">
+              <label class="setting-label">Notify after running for at least</label>
+              <p class="setting-desc">
+                Quick commands (like <code>ls</code>) never notify; only genuinely
+                long-running ones do. Set to 0 to notify on every command.
+              </p>
+              <div class="inline-field">
+                <input
+                  :value="uiStore.idleThresholdSeconds"
+                  class="tc-input"
+                  type="number"
+                  min="0"
+                  step="1"
+                  style="max-width: 96px"
+                  @change="uiStore.setIdleThresholdSeconds(Number(($event.target as HTMLInputElement).value))"
+                />
+                <span class="setting-desc" style="margin: 0">seconds</span>
+              </div>
+            </div>
+
+            <div class="setting-divider" />
+
+            <div class="setting-block">
+              <div class="info-card">
+                <Bell :size="14" class="info-card-icon" />
+                <span>
+                  Prompts that need your input (a <em>choose an option</em> menu, a
+                  <code>(y/n)</code> confirm, and the like) always notify — even in quick
+                  succession — so a blocked agent is never missed.
                 </span>
               </div>
             </div>
-          </div>
-        </div>
+          </section>
 
-        <!-- Launch Profiles Tab -->
-        <div v-if="activeTab === 'launch'" class="tab-panel">
-          <div class="form-group">
-            <label>Built-in Providers</label>
-            <span class="form-hint">
-              Available when creating a new terminal -- pick one to have its
-              command typed and submitted automatically once the shell is ready.
-            </span>
-            <div class="profile-list">
-              <div
-                v-for="profile in launchProfileStore.builtInProfiles"
-                :key="profile.id"
-                class="profile-row"
-              >
-                <component :is="profile.icon" class="profile-row-glyph" :size="13" :style="{ color: profile.color }" />
-                <span class="profile-row-label">{{ profile.label }}</span>
-                <span class="profile-row-command">{{ profile.command || "(no auto-run)" }}</span>
-              </div>
-            </div>
-          </div>
+          <!-- Launch Profiles -->
+          <section v-else-if="activeTab === 'launch'" class="settings-section">
+            <h4 class="section-title">Launch Profiles</h4>
 
-          <div class="form-group">
-            <label>Custom Providers &amp; Commands</label>
-            <span class="form-hint">
-              Add your own auto-run shortcuts -- a different agent CLI, a venv
-              activation, a dev-server start command, anything you type often.
-            </span>
-            <div class="profile-list">
-              <div
-                v-for="profile in launchProfileStore.customProfiles"
-                :key="profile.id"
-                class="profile-row"
-              >
-                <template v-if="editingProfileId === profile.id">
-                  <input v-model="editLabel" class="tc-input profile-edit-input" placeholder="Label" />
-                  <input v-model="editCommand" class="tc-input profile-edit-input" placeholder="Command" />
-                  <button class="tc-btn tc-btn-primary" @click="saveEditProfile">Save</button>
-                  <button class="tc-btn" @click="cancelEditProfile">Cancel</button>
-                </template>
-                <template v-else>
+            <div class="setting-block">
+              <label class="setting-label">Built-in providers</label>
+              <p class="setting-desc">
+                Available when creating a new terminal — pick one to have its command
+                typed and submitted automatically once the shell is ready.
+              </p>
+              <div class="profile-list">
+                <div
+                  v-for="profile in launchProfileStore.builtInProfiles"
+                  :key="profile.id"
+                  class="profile-row"
+                >
                   <component :is="profile.icon" class="profile-row-glyph" :size="13" :style="{ color: profile.color }" />
                   <span class="profile-row-label">{{ profile.label }}</span>
-                  <span class="profile-row-command">{{ profile.command }}</span>
-                  <button class="tc-btn" @click="startEditProfile(profile.id, profile.label, profile.command)">Edit</button>
-                  <button class="tc-btn" @click="launchProfileStore.removeCustomProfile(profile.id)">Delete</button>
-                </template>
-              </div>
-              <div v-if="launchProfileStore.customProfiles.length === 0" class="profile-row-empty">
-                No custom providers yet.
+                  <span class="profile-row-command">{{ profile.command || "(no auto-run)" }}</span>
+                </div>
               </div>
             </div>
-            <div class="profile-add-row">
-              <input v-model="newProfileLabel" class="tc-input" placeholder="Label (e.g. My Agent)" />
-              <input v-model="newProfileCommand" class="tc-input" placeholder="Command (e.g. my-agent --flag)" />
-              <button class="tc-btn tc-btn-primary" @click="addProfile">Add</button>
-            </div>
-          </div>
-        </div>
 
-        <!-- Groq Tab -->
-        <div v-if="activeTab === 'groq'" class="tab-panel">
-          <div class="form-group">
-            <label class="form-checkbox">
+            <div class="setting-divider" />
+
+            <div class="setting-block">
+              <label class="setting-label">Custom providers &amp; commands</label>
+              <p class="setting-desc">
+                Add your own auto-run shortcuts — a different agent CLI, a venv
+                activation, a dev-server start command, anything you type often.
+              </p>
+              <div class="profile-list">
+                <div
+                  v-for="profile in launchProfileStore.customProfiles"
+                  :key="profile.id"
+                  class="profile-row"
+                >
+                  <template v-if="editingProfileId === profile.id">
+                    <input v-model="editLabel" class="tc-input profile-edit-input" placeholder="Label" />
+                    <input v-model="editCommand" class="tc-input profile-edit-input" placeholder="Command" />
+                    <button class="tc-btn tc-btn-primary tc-btn-sm" @click="saveEditProfile">Save</button>
+                    <button class="tc-btn tc-btn-sm" @click="cancelEditProfile">Cancel</button>
+                  </template>
+                  <template v-else>
+                    <component :is="profile.icon" class="profile-row-glyph" :size="13" :style="{ color: profile.color }" />
+                    <span class="profile-row-label">{{ profile.label }}</span>
+                    <span class="profile-row-command">{{ profile.command }}</span>
+                    <button class="icon-btn" title="Edit" @click="startEditProfile(profile.id, profile.label, profile.command)">
+                      <Pencil :size="13" />
+                    </button>
+                    <button class="icon-btn icon-btn-danger" title="Delete" @click="launchProfileStore.removeCustomProfile(profile.id)">
+                      <Trash2 :size="13" />
+                    </button>
+                  </template>
+                </div>
+                <div v-if="launchProfileStore.customProfiles.length === 0" class="profile-row-empty">
+                  No custom providers yet.
+                </div>
+              </div>
+              <div class="profile-add-row">
+                <input v-model="newProfileLabel" class="tc-input" placeholder="Label (e.g. My Agent)" />
+                <input v-model="newProfileCommand" class="tc-input" placeholder="Command (e.g. my-agent --flag)" />
+                <button class="tc-btn tc-btn-primary" @click="addProfile">
+                  <Plus :size="14" /> Add
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!-- AI Naming (Groq) -->
+          <section v-else-if="activeTab === 'groq'" class="settings-section">
+            <h4 class="section-title">AI Naming</h4>
+            <p class="section-intro">
+              Groq generates short, meaningful names for your terminals and groups, and
+              summarizes long commands in hover cards. Bring your own API key.
+            </p>
+
+            <label class="toggle-row">
               <input v-model="groqSettings.enabled" type="checkbox" />
-              <span>Enable Auto-Naming</span>
+              <span class="toggle-text">
+                <span class="toggle-title">Enable AI auto-naming</span>
+                <span class="toggle-sub">Falls back to heuristic names when off or unavailable.</span>
+              </span>
             </label>
-          </div>
 
-          <div class="form-group">
-            <label>API Key</label>
-            <input
-              v-model="groqSettings.apiKey"
-              class="tc-input"
-              placeholder="gsk_..."
-              type="password"
-            />
-            <span class="form-hint">Leave empty to use GROQ_API_KEY env var</span>
-          </div>
+            <div class="setting-divider" />
 
-          <div class="form-group">
-            <label>Base URL</label>
-            <input v-model="groqSettings.baseUrl" class="tc-input" type="text" />
-          </div>
-
-          <div class="form-group">
-            <label>Model</label>
-            <select v-model="groqSettings.model" class="tc-input">
-              <option v-for="m in GROQ_MODELS" :key="m.value" :value="m.value">
-                {{ m.label }}
-              </option>
-            </select>
-          </div>
-
-          <div class="form-row">
-            <div class="form-group">
-              <label>Temperature</label>
-              <input
-                v-model.number="groqSettings.temperature"
-                class="tc-input"
-                type="number"
-                step="0.1"
-                min="0"
-                max="1"
-              />
+            <div class="setting-block">
+              <label class="setting-label">API key</label>
+              <input v-model="groqSettings.apiKey" class="tc-input" placeholder="gsk_..." type="password" />
+              <p class="setting-desc">Leave empty to use the <code>GROQ_API_KEY</code> environment variable.</p>
             </div>
-            <div class="form-group">
-              <label>Max Tokens</label>
-              <input
-                v-model.number="groqSettings.maxTokens"
-                class="tc-input"
-                type="number"
-                min="16"
-                max="1024"
-              />
-            </div>
-          </div>
 
-          <div
-            v-if="groqTestResult"
-            class="test-result"
-            :class="{
-              success: groqTestResult.startsWith('✓'),
-              error: groqTestResult.startsWith('✗'),
-            }"
-          >
-            {{ groqTestResult }}
-          </div>
-        </div>
-
-        <!-- System Integration Tab -->
-        <div v-if="activeTab === 'system'" class="tab-panel">
-          <div v-if="isWindows" class="system-section">
-            <h4 class="system-heading">Windows Explorer Context Menu</h4>
-            <p class="system-desc">
-              Add "Open in Terminal Canvas" to your right-click menu in Windows
-              Explorer. This lets you open any folder directly in a new terminal.
-            </p>
-            <div class="system-status">
-              <span
-                class="status-dot"
-                :class="contextMenuRegistered ? 'active' : 'inactive'"
-              />
-              <span class="status-text">
-                {{ contextMenuRegistered ? "Registered" : "Not registered" }}
-              </span>
+            <div class="setting-block">
+              <label class="setting-label">Model</label>
+              <select v-model="groqSettings.model" class="tc-input">
+                <option v-for="m in GROQ_MODELS" :key="m.value" :value="m.value">{{ m.label }}</option>
+              </select>
             </div>
-            <button
-              class="tc-btn tc-btn-primary"
-              :disabled="contextMenuLoading"
-              @click="toggleContextMenu"
+
+            <div class="field-row">
+              <div class="field">
+                <label class="field-label">Temperature</label>
+                <input v-model.number="groqSettings.temperature" class="tc-input" type="number" step="0.1" min="0" max="1" />
+              </div>
+              <div class="field">
+                <label class="field-label">Max tokens</label>
+                <input v-model.number="groqSettings.maxTokens" class="tc-input" type="number" min="16" max="1024" />
+              </div>
+            </div>
+
+            <details class="advanced">
+              <summary>Advanced</summary>
+              <div class="setting-block" style="margin-top: 10px">
+                <label class="setting-label">Base URL</label>
+                <input v-model="groqSettings.baseUrl" class="tc-input" type="text" />
+              </div>
+            </details>
+
+            <div
+              v-if="groqTestResult"
+              class="test-result"
+              :class="{ success: groqTestResult.startsWith('✓'), error: groqTestResult.startsWith('✗') }"
             >
-              {{ contextMenuLoading
-                ? "Working..."
-                : contextMenuRegistered
-                  ? "Remove from Context Menu"
-                  : "Add to Context Menu" }}
-            </button>
-          </div>
-          <div v-else-if="isMac" class="system-section">
-            <h4 class="system-heading">Finder Quick Action</h4>
-            <p class="system-desc">
-              Add "Open in Terminal Canvas" to the right-click menu for folders
-              in Finder (under Quick Actions / Services). Only works from the
-              installed app in /Applications, not a dev build.
-            </p>
-            <div class="system-status">
-              <span
-                class="status-dot"
-                :class="contextMenuRegistered ? 'active' : 'inactive'"
-              />
-              <span class="status-text">
-                {{ contextMenuRegistered ? "Registered" : "Not registered" }}
-              </span>
+              {{ groqTestResult }}
             </div>
-            <button
-              class="tc-btn tc-btn-primary"
-              :disabled="contextMenuLoading"
-              @click="toggleContextMenu"
-            >
-              {{ contextMenuLoading
-                ? "Working..."
-                : contextMenuRegistered
-                  ? "Remove from Finder"
-                  : "Add to Finder" }}
-            </button>
-          </div>
-          <div v-else class="system-section">
-            <h4 class="system-heading">Right-Click Integration</h4>
-            <p class="system-desc">
-              Right-click-to-open-here integration is only available on
-              Windows and macOS. Use the "Open" button in the toolbar or drag
-              a folder onto the canvas instead.
-            </p>
-          </div>
+          </section>
+
+          <!-- System -->
+          <section v-else-if="activeTab === 'system'" class="settings-section">
+            <h4 class="section-title">System Integration</h4>
+
+            <div v-if="isWindows" class="system-block">
+              <label class="setting-label">Windows Explorer context menu</label>
+              <p class="setting-desc">
+                Add "Open in Terminal Canvas" to your right-click menu in Explorer, to
+                open any folder directly in a new terminal.
+              </p>
+              <div class="system-status">
+                <span class="status-dot" :class="contextMenuRegistered ? 'active' : 'inactive'" />
+                <span>{{ contextMenuRegistered ? "Registered" : "Not registered" }}</span>
+              </div>
+              <button class="tc-btn tc-btn-primary" :disabled="contextMenuLoading" @click="toggleContextMenu">
+                {{ contextMenuLoading ? "Working..." : contextMenuRegistered ? "Remove from Context Menu" : "Add to Context Menu" }}
+              </button>
+            </div>
+
+            <div v-else-if="isMac" class="system-block">
+              <label class="setting-label">Finder Quick Action</label>
+              <p class="setting-desc">
+                Add "Open in Terminal Canvas" to the right-click menu for folders in
+                Finder (under Quick Actions). Only works from the installed app in
+                /Applications, not a dev build.
+              </p>
+              <div class="system-status">
+                <span class="status-dot" :class="contextMenuRegistered ? 'active' : 'inactive'" />
+                <span>{{ contextMenuRegistered ? "Registered" : "Not registered" }}</span>
+              </div>
+              <button class="tc-btn tc-btn-primary" :disabled="contextMenuLoading" @click="toggleContextMenu">
+                {{ contextMenuLoading ? "Working..." : contextMenuRegistered ? "Remove from Finder" : "Add to Finder" }}
+              </button>
+            </div>
+
+            <div v-else class="system-block">
+              <label class="setting-label">Right-click integration</label>
+              <p class="setting-desc">
+                Right-click-to-open-here integration is only available on Windows and
+                macOS. Use the "Open" button in the toolbar or drag a folder onto the
+                canvas instead.
+              </p>
+            </div>
+          </section>
         </div>
       </div>
 
       <div class="dialog-footer">
         <button class="tc-btn" @click="close">Cancel</button>
-        <button
-          v-if="activeTab === 'groq'"
-          class="tc-btn"
-          :disabled="testingGroq"
-          @click="testGroq"
-        >
+        <button v-if="activeTab === 'groq'" class="tc-btn" :disabled="testingGroq" @click="testGroq">
           {{ testingGroq ? "Testing..." : "Test Connection" }}
         </button>
         <button class="tc-btn tc-btn-primary" @click="saveAll">Save</button>
@@ -599,16 +643,19 @@ async function toggleContextMenu() {
   z-index: var(--tc-z-modal);
 }
 
+/* Fixed size so switching tabs never resizes the modal. */
 .dialog {
   background: var(--tc-bg-card);
   border: 1px solid var(--tc-border-color);
   border-radius: var(--tc-border-radius);
-  min-width: 480px;
-  max-width: 90vw;
-  max-height: 85vh;
+  width: 800px;
+  height: 600px;
+  max-width: 94vw;
+  max-height: 88vh;
   display: flex;
   flex-direction: column;
   box-shadow: var(--tc-shadow-lg);
+  overflow: hidden;
 }
 
 .dialog-header {
@@ -634,7 +681,6 @@ async function toggleContextMenu() {
   color: var(--tc-text-muted);
   cursor: pointer;
   border-radius: var(--tc-border-radius-sm);
-  font-size: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -645,109 +691,186 @@ async function toggleContextMenu() {
   color: var(--tc-text-primary);
 }
 
-.dialog-tabs {
+.dialog-main {
+  flex: 1;
   display: flex;
-  border-bottom: 1px solid var(--tc-border-color);
-  flex-shrink: 0;
-  padding: 0 18px;
-  gap: 4px;
+  min-height: 0;
 }
 
-.dialog-tab {
-  padding: 10px 14px;
+/* Left nav */
+.settings-nav {
+  width: 196px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--tc-border-color);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--tc-bg-secondary);
+  overflow-y: auto;
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
   border: none;
   background: transparent;
-  color: var(--tc-text-muted);
+  color: var(--tc-text-secondary);
   font-size: var(--tc-font-size-sm);
-  cursor: pointer;
-  transition: all var(--tc-transition-fast);
   font-family: var(--tc-font-sans);
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--tc-border-radius-sm);
+  transition: all var(--tc-transition-fast);
+  border-left: 2px solid transparent;
 }
 
-.dialog-tab:hover {
-  color: var(--tc-text-secondary);
+.settings-nav-item:hover {
+  background: var(--tc-bg-hover);
+  color: var(--tc-text-primary);
 }
 
-.dialog-tab.active {
+.settings-nav-item.active {
+  background: var(--tc-accent-soft);
   color: var(--tc-accent);
-  border-bottom-color: var(--tc-accent);
+  border-left-color: var(--tc-accent);
+  font-weight: 600;
 }
 
-.dialog-body {
-  padding: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  overflow-y: auto;
-  flex: 1;
-}
-
-.tab-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 12px 18px;
-  border-top: 1px solid var(--tc-border-color);
+.settings-nav-icon {
   flex-shrink: 0;
+  opacity: 0.9;
 }
 
-.form-group {
+/* Content */
+.settings-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 22px;
+  min-width: 0;
+}
+
+.settings-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 16px;
 }
 
-.form-group label {
+.section-title {
+  font-size: var(--tc-font-size-md);
+  font-weight: 700;
+  color: var(--tc-text-primary);
+  margin: 0;
+}
+
+.section-intro {
   font-size: var(--tc-font-size-sm);
   color: var(--tc-text-secondary);
-  font-weight: 500;
+  line-height: 1.5;
+  margin: -6px 0 0;
 }
 
-.form-row {
+.setting-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setting-label {
+  font-size: var(--tc-font-size-sm);
+  font-weight: 600;
+  color: var(--tc-text-primary);
+}
+
+.setting-desc {
+  font-size: var(--tc-font-size-xs);
+  color: var(--tc-text-muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.setting-desc code,
+.info-card code {
+  font-family: var(--tc-font-mono);
+  background: var(--tc-bg-secondary);
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 0.92em;
+}
+
+.setting-divider {
+  height: 1px;
+  background: var(--tc-border-color);
+  opacity: 0.7;
+}
+
+/* Segmented control */
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  background: var(--tc-bg-secondary);
+  border: 1px solid var(--tc-border-color);
+  border-radius: var(--tc-border-radius);
+  align-self: flex-start;
+}
+
+.segmented-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: var(--tc-text-secondary);
+  font-size: var(--tc-font-size-sm);
+  font-family: var(--tc-font-sans);
+  cursor: pointer;
+  border-radius: var(--tc-border-radius-sm);
+  transition: all var(--tc-transition-fast);
+}
+
+.segmented-btn:hover {
+  background: var(--tc-bg-hover);
+  color: var(--tc-text-primary);
+}
+
+.segmented-btn.active {
+  background: var(--tc-accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* Fields */
+.field-row {
   display: flex;
   gap: 12px;
 }
 
-.size-preset-row {
-  display: flex;
-  gap: 6px;
-}
-
-.form-row .form-group {
+.field {
   flex: 1;
-}
-
-.form-checkbox {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  font-size: var(--tc-font-size-sm);
-  color: var(--tc-text-primary);
+  flex-direction: column;
+  gap: 5px;
 }
 
-.form-checkbox input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--tc-accent);
-}
-
-.form-hint {
+.field-label {
   font-size: var(--tc-font-size-xs);
   color: var(--tc-text-muted);
 }
 
+.inline-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .tc-input {
   width: 100%;
-  padding: 6px 10px;
+  padding: 7px 10px;
   border: 1px solid var(--tc-border-color);
   border-radius: var(--tc-border-radius-sm);
   background: var(--tc-bg-secondary);
@@ -762,6 +885,75 @@ async function toggleContextMenu() {
   border-color: var(--tc-accent);
 }
 
+/* Toggle rows */
+.toggle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.toggle-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  accent-color: var(--tc-accent);
+  flex-shrink: 0;
+}
+
+.toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.toggle-title {
+  font-size: var(--tc-font-size-sm);
+  color: var(--tc-text-primary);
+  font-weight: 500;
+}
+
+.toggle-sub {
+  font-size: var(--tc-font-size-xs);
+  color: var(--tc-text-muted);
+}
+
+.info-card {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  background: var(--tc-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--tc-accent) 30%, transparent);
+  border-radius: var(--tc-border-radius-sm);
+  font-size: var(--tc-font-size-xs);
+  color: var(--tc-text-secondary);
+  line-height: 1.5;
+}
+
+.info-card-icon {
+  color: var(--tc-accent);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.advanced {
+  border-top: 1px solid var(--tc-border-color);
+  padding-top: 10px;
+}
+
+.advanced summary {
+  cursor: pointer;
+  font-size: var(--tc-font-size-sm);
+  color: var(--tc-text-secondary);
+  user-select: none;
+}
+
+.advanced summary:hover {
+  color: var(--tc-text-primary);
+}
+
+/* Test result */
 .test-result {
   padding: 8px 12px;
   border-radius: var(--tc-border-radius-sm);
@@ -780,12 +972,7 @@ async function toggleContextMenu() {
   border: 1px solid rgba(233, 69, 96, 0.2);
 }
 
-.system-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
+/* Launch profiles */
 .profile-list {
   display: flex;
   flex-direction: column;
@@ -796,15 +983,13 @@ async function toggleContextMenu() {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
+  padding: 7px 10px;
   border: 1px solid var(--tc-border-color);
   border-radius: var(--tc-border-radius-sm);
   background: var(--tc-bg-secondary);
 }
 
 .profile-row-glyph {
-  font-size: 13px;
-  line-height: 1;
   flex-shrink: 0;
   width: 16px;
   text-align: center;
@@ -831,7 +1016,10 @@ async function toggleContextMenu() {
 .profile-row-empty {
   font-size: var(--tc-font-size-sm);
   color: var(--tc-text-muted);
-  padding: 6px 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--tc-border-color);
+  border-radius: var(--tc-border-radius-sm);
+  text-align: center;
 }
 
 .profile-edit-input {
@@ -841,23 +1029,43 @@ async function toggleContextMenu() {
 .profile-add-row {
   display: flex;
   gap: 8px;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
 .profile-add-row .tc-input {
   flex: 1;
 }
 
-.system-heading {
-  font-size: var(--tc-font-size-sm);
-  font-weight: 600;
+.icon-btn {
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  color: var(--tc-text-muted);
+  cursor: pointer;
+  border-radius: var(--tc-border-radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all var(--tc-transition-fast);
+}
+
+.icon-btn:hover {
+  background: var(--tc-bg-hover);
   color: var(--tc-text-primary);
 }
 
-.system-desc {
-  font-size: var(--tc-font-size-sm);
-  color: var(--tc-text-secondary);
-  line-height: var(--tc-line-height-normal);
+.icon-btn-danger:hover {
+  color: var(--tc-error);
+}
+
+/* System */
+.system-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
 }
 
 .system-status {
@@ -865,6 +1073,7 @@ async function toggleContextMenu() {
   align-items: center;
   gap: 8px;
   font-size: var(--tc-font-size-sm);
+  color: var(--tc-text-secondary);
 }
 
 .status-dot {
@@ -881,8 +1090,14 @@ async function toggleContextMenu() {
   background: var(--tc-text-muted);
 }
 
-.status-text {
-  color: var(--tc-text-secondary);
+/* Footer + buttons */
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--tc-border-color);
+  flex-shrink: 0;
 }
 
 .tc-btn {
@@ -890,7 +1105,7 @@ async function toggleContextMenu() {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 7px 14px;
   border: 1px solid var(--tc-border-color);
   border-radius: var(--tc-border-radius-sm);
   background: var(--tc-bg-card);
@@ -899,6 +1114,10 @@ async function toggleContextMenu() {
   cursor: pointer;
   transition: all var(--tc-transition-fast);
   font-family: var(--tc-font-sans);
+}
+
+.tc-btn-sm {
+  padding: 4px 10px;
 }
 
 .tc-btn:hover {
@@ -921,5 +1140,6 @@ async function toggleContextMenu() {
 .tc-btn-primary:hover {
   background: var(--tc-accent-hover);
   border-color: var(--tc-accent-hover);
+  color: #fff;
 }
 </style>

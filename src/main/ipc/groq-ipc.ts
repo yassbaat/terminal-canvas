@@ -4,6 +4,7 @@ import {
   generateGroupName,
   getGroqConfig,
   updateGroqConfig,
+  summarizeCommand,
 } from "../groq/groq-naming-service";
 import { terminalManager } from "../terminal/terminal-manager";
 import { createLogger } from "../util/logger";
@@ -87,6 +88,17 @@ export function registerGroqIPC(): void {
         error instanceof Error ? error.message : String(error);
       logger.error("Groq connection test failed:", error);
       return { success: false, message: `Connection failed: ${message}` };
+    }
+  });
+
+  ipcMain.handle("groq:summarizeCommand", async (_, { text }) => {
+    try {
+      return await summarizeCommand(String(text ?? ""));
+    } catch (error) {
+      logger.error("IPC: groq:summarizeCommand failed", error);
+      // Never reject -- the renderer treats the raw text as its own fallback.
+      const t = String(text ?? "").replace(/\s+/g, " ").trim();
+      return t.length > 120 ? t.slice(0, 119) + "…" : t;
     }
   });
 

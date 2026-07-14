@@ -7,6 +7,7 @@ import { formatDateTime } from "@renderer/util/format";
 import type { PromptEntry } from "@renderer/type/prompt";
 import PromptItem from "@renderer/component/terminal/PromptItem.vue";
 import { useResizeHandle } from "@renderer/composable/useResizeHandle";
+import { PanelRightClose } from "lucide-vue-next";
 
 const terminalStore = useTerminalStore();
 const promptStore = usePromptStore();
@@ -93,12 +94,19 @@ function copyPromptText(text: string) {
       >
         Terminal
       </button>
-      <button 
-        class="inspector-tab" 
+      <button
+        class="inspector-tab"
         :class="{ active: activeTab === 'prompt' }"
         @click="activeTab = 'prompt'"
       >
         Memory
+      </button>
+      <button
+        class="inspector-collapse-btn"
+        title="Collapse inspector"
+        @click="uiStore.toggleInspector()"
+      >
+        <PanelRightClose :size="15" />
       </button>
     </div>
     
@@ -250,6 +258,26 @@ function copyPromptText(text: string) {
   display: flex;
   border-bottom: 1px solid var(--tc-border-color);
   flex-shrink: 0;
+}
+
+.inspector-collapse-btn {
+  flex-shrink: 0;
+  width: 34px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: transparent;
+  color: var(--tc-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--tc-transition-fast);
+}
+
+.inspector-collapse-btn:hover {
+  color: var(--tc-text-primary);
+  background: var(--tc-bg-hover);
 }
 
 .inspector-tab {
