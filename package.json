@@ -1,6 +1,6 @@
 {
   "name": "terminal-canvas",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "description": "Infinite-canvas terminal workspace for managing multiple coding-agent sessions",
   "main": "./dist/main/index.cjs",
   "author": "Terminal Canvas Team",
