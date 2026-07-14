@@ -6,6 +6,8 @@ import { Copy, Repeat, Pin, PinOff, X } from "lucide-vue-next";
 
 const props = defineProps<{
   prompt: PromptEntry;
+  /** The most-recently-submitted entry -- rendered larger/bolder to stand out. */
+  isLatest?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -61,6 +63,7 @@ async function copyToClipboard() {
       pinned: prompt.pinned,
       expanded,
       deleted: prompt.status === 'deleted',
+      latest: isLatest,
     }"
   >
     <div class="prompt-main" @click="expanded = !expanded">
@@ -139,6 +142,20 @@ async function copyToClipboard() {
 
 .prompt-item.deleted {
   opacity: 0.3;
+}
+
+/* The most recent prompt is the "what's happening now" line -- make it bigger,
+   bolder and accent-marked so it reads at a glance in the memory list. */
+.prompt-item.latest {
+  border-color: var(--tc-memory-border);
+  box-shadow: inset 3px 0 0 var(--tc-accent);
+}
+
+.prompt-item.latest .prompt-text {
+  font-size: var(--tc-font-size-sm);
+  font-weight: 600;
+  color: var(--tc-text-primary);
+  max-height: 5.6em;
 }
 
 .prompt-main {

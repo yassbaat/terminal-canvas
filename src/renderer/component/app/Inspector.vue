@@ -37,6 +37,13 @@ const memoryPrompts = computed(() => {
   return list;
 });
 
+// Most-recently-submitted entry shown -- highlighted larger/bolder.
+const latestMemoryId = computed(() => {
+  const active = memoryPrompts.value.filter((p) => p.status !== "deleted");
+  if (active.length === 0) return null;
+  return [...active].sort((a, b) => b.submittedAt - a.submittedAt)[0].id;
+});
+
 function handleMemoryResend(promptId: string) {
   const terminalId = session.value?.id;
   if (terminalId) promptStore.resendPrompt(terminalId, promptId);
@@ -212,6 +219,7 @@ function copyPromptText(text: string) {
               v-for="prompt in memoryPrompts"
               :key="prompt.id"
               :prompt="prompt"
+              :is-latest="prompt.id === latestMemoryId"
               @resend="handleMemoryResend"
               @delete="handleMemoryDelete"
               @pin="handleMemoryPin"

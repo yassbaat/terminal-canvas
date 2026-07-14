@@ -24,6 +24,14 @@ const prompts = computed(() => {
 
 const promptCount = computed(() => prompts.value.length);
 
+// The most-recently-submitted (non-deleted) entry among those shown -- the
+// list is sorted pinned-first, so pick by time rather than position.
+const latestId = computed(() => {
+  const active = prompts.value.filter((p: PromptEntry) => p.status !== "deleted");
+  if (active.length === 0) return null;
+  return [...active].sort((a, b) => b.submittedAt - a.submittedAt)[0].id;
+});
+
 function handleResend(promptId: string) {
   promptStore.resendPrompt(props.terminalId, promptId);
 }
@@ -89,6 +97,7 @@ function onListWheel(e: WheelEvent): void {
           v-for="prompt in prompts"
           :key="prompt.id"
           :prompt="prompt"
+          :is-latest="prompt.id === latestId"
           @resend="handleResend"
           @delete="handleDelete"
           @pin="handlePin"
