@@ -218,8 +218,18 @@ function onListWheel(e: WheelEvent): void {
   padding: 4px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   overscroll-behavior: contain;
+}
+
+/* A hairline between entries so the memory reads as a clean, separated list
+   rather than a run-together block. Sits above the gap; the item's own
+   full border on hover simply layers over it (same colour, no jump). */
+.rail-list :deep(.prompt-item:not(:first-child)) {
+  border-top: 1px solid var(--tc-memory-border);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  padding-top: 7px;
 }
 
 .rail-empty {

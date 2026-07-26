@@ -132,7 +132,7 @@ function copyPromptText(text: string) {
               <button class="detail-action" @click="renameSession">Rename</button>
               <button class="detail-action" @click="autoName">Auto</button>
             </div>
-            <div class="detail-row">
+            <div v-if="uiStore.showShellType" class="detail-row">
               <span class="detail-label">Shell</span>
               <span class="detail-value">{{ session.shellName }}</span>
             </div>

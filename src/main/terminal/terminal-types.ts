@@ -58,4 +58,10 @@ export interface ActiveTerminal {
    * re-rendering (arrow-key redraws) into a single notification.
    */
   lastInputPromptAt: number | null;
+  /**
+   * Debounce timer for the OS-level cwd probe (see scheduleCwdProbe /
+   * CWD_PROBE_DEBOUNCE_MS). Runs once output settles so a busy terminal never
+   * triggers the probe mid-run.
+   */
+  cwdProbeTimer: ReturnType<typeof setTimeout> | null;
 }

@@ -34,6 +34,7 @@ const INSPECTOR_WIDTH_KEY = "terminal-canvas:inspector-width";
 const MEMORY_RAIL_WIDTH_KEY = "terminal-canvas:memory-rail-width";
 const HEADER_STYLE_KEY = "terminal-canvas:terminal-header-style";
 const NEW_ITEM_PLACEMENT_KEY = "terminal-canvas:new-item-placement";
+const SHOW_SHELL_TYPE_KEY = "terminal-canvas:show-shell-type";
 
 function readStoredWidth(key: string, fallback: number): number {
   const raw = localStorage.getItem(key);
@@ -83,6 +84,17 @@ export const useUIStore = defineStore("ui", () => {
   function setHeaderStyle(style: TerminalHeaderStyle): void {
     headerStyle.value = style;
     localStorage.setItem(HEADER_STYLE_KEY, style);
+  }
+
+  // ─── Show shell type (zsh, bash, PowerShell…) ────────────────────
+  // Off by default: which shell a terminal runs is rarely something the user
+  // needs to see once they're working, and it adds clutter to headers, the
+  // Layers list and the Inspector. Opt in from Settings → Appearance.
+  const showShellType = ref(localStorage.getItem(SHOW_SHELL_TYPE_KEY) === "true");
+
+  function setShowShellType(value: boolean): void {
+    showShellType.value = value;
+    localStorage.setItem(SHOW_SHELL_TYPE_KEY, String(value));
   }
 
   // ─── New-item placement behavior ─────────────────────────────────
@@ -277,6 +289,21 @@ export const useUIStore = defineStore("ui", () => {
     if (focusSet.value.length === 0) exitFocus();
   }
 
+  /**
+   * Swap two staged terminals' positions in the focus set (drag-and-drop on the
+   * Focus stage). Reorders the underlying array so the swap survives paging and
+   * per-screen changes -- the grid always renders a slice of focusSet in order.
+   */
+  function swapFocus(idA: string, idB: string): void {
+    if (idA === idB) return;
+    const a = focusSet.value.indexOf(idA);
+    const b = focusSet.value.indexOf(idB);
+    if (a === -1 || b === -1) return;
+    const next = [...focusSet.value];
+    [next[a], next[b]] = [next[b], next[a]];
+    focusSet.value = next;
+  }
+
   /** How many terminals to show per screen/page (1 for small displays, up to 6). */
   function setFocusPerScreen(n: number): void {
     focusPerScreen.value = Math.max(1, Math.min(6, Math.round(n)));
@@ -449,6 +476,7 @@ export const useUIStore = defineStore("ui", () => {
     inspectorWidth,
     memoryRailWidth,
     headerStyle,
+    showShellType,
     newItemPlacement,
     revealTarget,
     hoveredTerminalId,
@@ -486,6 +514,7 @@ export const useUIStore = defineStore("ui", () => {
     setInspectorWidth,
     setMemoryRailWidth,
     setHeaderStyle,
+    setShowShellType,
     setNewItemPlacement,
     revealNewItem,
     setHoveredTerminal,
@@ -495,6 +524,7 @@ export const useUIStore = defineStore("ui", () => {
     exitFocus,
     addToFocus,
     removeFromFocus,
+    swapFocus,
     setFocusPerScreen,
     setFocusPage,
     toggleFocusMemory,

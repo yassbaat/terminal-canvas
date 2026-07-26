@@ -59,9 +59,25 @@ function xtermThemeFor(theme: "light" | "dark"): ITheme {
   return theme === "light" ? LIGHT_XTERM_THEME : DARK_XTERM_THEME;
 }
 
+/**
+ * Focus xterm WITHOUT letting the browser scroll an ancestor to "reveal" the
+ * hidden helper textarea. That reveal-scroll is the root cause of the terminal
+ * "jumping to the top" the moment it gains focus (on the canvas or when it
+ * remounts on the Focus stage): the textarea lives at row 0 of the buffer, so
+ * bringing it into view scrolls the scrollback all the way up. Focusing the
+ * textarea directly with { preventScroll: true } suppresses that entirely.
+ * Falls back to xterm.focus() only if the textarea isn't in the DOM yet.
+ */
+function focusXterm(): void {
+  if (!xterm) return;
+  const ta = terminalContainer.value?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+  if (ta) ta.focus({ preventScroll: true });
+  else xterm.focus();
+}
+
 function handleFocus() {
   if (xterm) {
-    xterm.focus();
+    focusXterm();
     terminalStore.setFocused(props.terminalId);
   }
 }
@@ -274,6 +290,9 @@ onMounted(async () => {
     try {
       if (buffer) xterm.write(buffer);
       for (const chunk of pendingChunks) xterm.write(chunk);
+      // Land at the live prompt after a replay (e.g. remounting on the Focus
+      // stage) instead of at the top of the reconstructed scrollback.
+      xterm.scrollToBottom();
     } catch (err) {
       console.error("[XtermView] replay write failed:", err);
     }
@@ -317,7 +336,7 @@ onMounted(async () => {
   }
 
   // Focus on mount
-  xterm.focus();
+  focusXterm();
 });
 
 onUnmounted(() => {
@@ -360,7 +379,7 @@ watch(
   () => terminalStore.focusedTerminalId,
   (newId) => {
     if (newId === props.terminalId && xterm) {
-      xterm.focus();
+      focusXterm();
     }
   }
 );

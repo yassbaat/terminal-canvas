@@ -138,6 +138,11 @@ function handleBodyClick(): void {
   terminalStore.setFocused(props.id);
 }
 
+/** Open this single terminal full-screen on the Focus stage (header button). */
+function focusSolo(): void {
+  uiStore.enterFocus([props.id]);
+}
+
 // Handle kill action from header
 function handleKill(): void {
   terminalStore.killSession(props.id);
@@ -220,7 +225,9 @@ watch(
       <!-- Header: drag handle + session info + controls -->
       <TerminalHeader
         :session="data.session"
+        :can-focus="true"
         @focus="terminalStore.setFocused(id)"
+        @focus-solo="focusSolo"
         @kill="handleKill"
         @restart="handleRestart"
         @clear="handleClear"
@@ -293,13 +300,15 @@ watch(
   pointer-events: none;
 }
 
+/* Name is the secondary line -- small, muted -- so the last prompt below it
+   is what the eye lands on first. */
 .hover-preview-name {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--tc-text-primary);
+  color: var(--tc-text-muted);
   margin-bottom: 6px;
 }
 
@@ -310,10 +319,12 @@ watch(
   flex-shrink: 0;
 }
 
+/* The last prompt leads: bigger, bolder, primary-coloured. */
 .hover-preview-prompt {
-  font-size: 12px;
+  font-size: 14px;
+  font-weight: 600;
   line-height: 1.4;
-  color: var(--tc-text-secondary);
+  color: var(--tc-text-primary);
   font-family: var(--tc-font-mono);
   display: -webkit-box;
   -webkit-line-clamp: 3;

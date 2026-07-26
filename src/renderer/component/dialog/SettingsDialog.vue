@@ -361,6 +361,22 @@ async function toggleContextMenu() {
             <div class="setting-divider" />
 
             <div class="setting-block">
+              <label class="toggle-row">
+                <input
+                  type="checkbox"
+                  :checked="uiStore.showShellType"
+                  @change="uiStore.setShowShellType(($event.target as HTMLInputElement).checked)"
+                />
+                <span class="toggle-text">
+                  <span class="toggle-title">Show shell type</span>
+                  <span class="toggle-sub">Display which shell each terminal runs (zsh, bash, PowerShell…) in headers, the Layers list and the Inspector. Off by default.</span>
+                </span>
+              </label>
+            </div>
+
+            <div class="setting-divider" />
+
+            <div class="setting-block">
               <label class="setting-label">When adding a terminal or note</label>
               <p class="setting-desc">
                 What the canvas does when a new item appears. New terminals always take

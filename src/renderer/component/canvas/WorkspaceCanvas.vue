@@ -1135,9 +1135,9 @@ onUnmounted(() => {
   top: 40px;
   left: 10px;
   z-index: 21;
-  width: 208px;
+  width: 232px;
   max-width: calc(100% - 20px);
-  padding: 6px 9px;
+  padding: 7px 10px;
   background: var(--tc-bg-card);
   border: 1px solid var(--tc-border-color);
   border-left: 2px solid var(--tc-accent);
@@ -1148,13 +1148,15 @@ onUnmounted(() => {
   opacity: 0.96;
 }
 
+/* The terminal's name is the secondary line here -- kept small so the last
+   command (the thing you're actually scanning for) leads. */
 .hovered-info-name {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 11.5px;
+  font-size: 10.5px;
   font-weight: 600;
-  color: var(--tc-text-primary);
+  color: var(--tc-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1167,14 +1169,16 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
+/* The last command reads first: larger, bolder, primary-coloured. */
 .hovered-info-cmd {
   margin-top: 3px;
-  font-size: 10.5px;
+  font-size: 12.5px;
+  font-weight: 600;
   line-height: 1.35;
-  color: var(--tc-text-secondary);
+  color: var(--tc-text-primary);
   font-family: var(--tc-font-mono);
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }

@@ -1,6 +1,8 @@
 import { spawn } from "node-pty";
 import os from "os";
 import path from "path";
+import { execFile } from "child_process";
+import { promises as fsp } from "fs";
 import { createLogger } from "../util/logger";
 import { generateId } from "../util/ids";
 import { detectShells } from "./shell-detector";
@@ -47,6 +49,54 @@ const MAX_IDLE_NOTIFICATIONS_PER_MINUTE = 4;
 // Cap on the per-terminal replay buffer (raw output). ~256KB is plenty to
 // reconstruct a screenful-plus of scrollback while bounding memory.
 const OUTPUT_BUFFER_LIMIT = 256 * 1024;
+
+// How long output must be quiet before we probe the shell process's real cwd
+// from the OS (see probeCwd / scheduleCwdProbe). Prompt-text parsing misses a
+// `cd` whenever the prompt doesn't print the full path (the default macOS zsh
+// prompt shows only the last segment, oh-my-zsh themes abbreviate, agents draw
+// their own prompt, etc.), so we ask the OS directly once things settle. The
+// probe is debounced so a busy/streaming terminal never triggers it mid-run.
+const CWD_PROBE_DEBOUNCE_MS = 400;
+
+/**
+ * Ask the OS for a process's current working directory by PID. This is the
+ * authoritative source (it reflects `cd` regardless of what the prompt prints)
+ * and works for the shell PID node-pty gives us. Platform-specific:
+ *   - Linux:  read the /proc/<pid>/cwd symlink.
+ *   - macOS:  `lsof -a -d cwd -p <pid> -Fn`, parse the `n` (name) field.
+ *   - Windows: not supported here -- prompt-text parsing (PowerShell shows the
+ *     full path) already handles the common case.
+ * Returns null on any error so callers simply keep the previous cwd.
+ */
+async function probeCwd(pid: number): Promise<string | null> {
+  if (!pid || pid <= 0) return null;
+  try {
+    if (process.platform === "linux") {
+      const p = await fsp.readlink(`/proc/${pid}/cwd`);
+      return p ? p.trim() || null : null;
+    }
+    if (process.platform === "darwin") {
+      return await new Promise<string | null>((resolve) => {
+        execFile(
+          "lsof",
+          ["-a", "-d", "cwd", "-p", String(pid), "-Fn"],
+          { timeout: 2000 },
+          (err, stdout) => {
+            if (err) return resolve(null);
+            // Output is field-per-line: "p<pid>", "fcwd", "n<path>". Take the
+            // path from the first n-line.
+            const line = stdout.split("\n").find((l) => l.startsWith("n"));
+            const p = line ? line.slice(1).trim() : "";
+            resolve(p || null);
+          }
+        );
+      });
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 // How long to wait before the SAME terminal can raise another "input" prompt
 // notification. Interactive menus redraw on every arrow-key press (the
@@ -140,6 +190,12 @@ export class TerminalManager {
       active.quietTimer = null;
     }
     active.busyStartedAt = null;
+    // Called on every teardown path (kill/restart/dispose), so also stop the
+    // pending cwd probe here rather than leaking a stray timer.
+    if (active.cwdProbeTimer) {
+      clearTimeout(active.cwdProbeTimer);
+      active.cwdProbeTimer = null;
+    }
   }
 
   /**
@@ -314,8 +370,11 @@ export class TerminalManager {
         this.ipcWindow.webContents.send("terminal:data", { terminalId: id, data });
       }
 
-      // Attempt CWD detection from prompt-like output
+      // Attempt CWD detection from prompt-like output (fast path), plus an
+      // authoritative OS-level probe once output settles (catches `cd` even
+      // when the prompt never prints the full path).
       this.detectCwdChange(data, session);
+      this.scheduleCwdProbe(id);
 
       // First shell prompt seen -- safe to inject an auto-run command now
       // (rc files have finished loading). See checkPromptReady.
@@ -424,6 +483,7 @@ export class TerminalManager {
       cursorVisible: true,
       lastInputAt: null,
       lastInputPromptAt: null,
+      cwdProbeTimer: null,
     };
 
     this.terminals.set(id, active);
@@ -772,6 +832,50 @@ export class TerminalManager {
     active.promptSeen = true;
     if (this.ipcWindow && !this.ipcWindow.isDestroyed()) {
       this.ipcWindow.webContents.send("terminal:ready", { terminalId: id });
+    }
+  }
+
+  /**
+   * (Re)arm the debounced OS cwd probe. Every output chunk pushes it back, so
+   * the probe only fires once a terminal has been quiet for
+   * CWD_PROBE_DEBOUNCE_MS -- i.e. it's sitting at a prompt, exactly when a `cd`
+   * would have taken effect.
+   */
+  private scheduleCwdProbe(id: string): void {
+    const active = this.terminals.get(id);
+    if (!active) return;
+    if (active.cwdProbeTimer) clearTimeout(active.cwdProbeTimer);
+    active.cwdProbeTimer = setTimeout(() => {
+      const still = this.terminals.get(id);
+      if (still) still.cwdProbeTimer = null;
+      void this.probeAndUpdateCwd(id);
+    }, CWD_PROBE_DEBOUNCE_MS);
+  }
+
+  /**
+   * Probe the shell's real cwd from the OS and, if it changed, update the
+   * session and notify the renderer (same shape as detectCwdChange's emit).
+   */
+  private async probeAndUpdateCwd(id: string): Promise<void> {
+    const active = this.terminals.get(id);
+    if (!active || active.session.status !== "running") return;
+    const detected = await probeCwd(active.pty.pid);
+    if (!detected) return;
+    // The terminal may have been torn down while lsof was running.
+    const current = this.terminals.get(id);
+    if (!current || current.session.cwd === detected) return;
+
+    const session = current.session;
+    session.cwd = detected;
+    session.cwdLabel = this.shortenCwd(detected);
+    session.projectName = this.extractProjectName(detected);
+    session.updatedAt = Date.now();
+
+    if (this.ipcWindow && !this.ipcWindow.isDestroyed()) {
+      this.ipcWindow.webContents.send("terminal:cwdChanged", {
+        terminalId: id,
+        cwd: detected,
+      });
     }
   }
 

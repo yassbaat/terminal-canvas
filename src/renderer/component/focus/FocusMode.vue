@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch, onMounted, onUnmounted } from "vue";
+import { computed, ref, watch, onMounted, onUnmounted } from "vue";
 import type { TerminalSession } from "@renderer/type/terminal";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Bell,
   ArrowLeft,
+  ArrowLeftRight,
   Grid2x2,
 } from "lucide-vue-next";
 
@@ -70,14 +71,154 @@ const cols = computed(() => {
 const rows = computed(() => Math.max(1, Math.ceil(pageTiles.value.length / cols.value)));
 const emptyCells = computed(() => cols.value * rows.value - pageTiles.value.length);
 
-const gridStyle = computed(() => ({
-  gridTemplateColumns: `repeat(${cols.value}, 1fr)`,
-  gridTemplateRows: `repeat(${rows.value}, 1fr)`,
-}));
+// ─── Adjustable grid tracks (resize handles) ─────────────────────
+// Each column/row starts at an equal fraction (1fr); dragging a gutter
+// transfers fractions between two adjacent tracks, clamped so no tile shrinks
+// below MIN_FR of the row/column space -- they always stay visible.
+const gridRef = ref<HTMLElement | null>(null);
+const colFr = ref<number[]>([]);
+const rowFr = ref<number[]>([]);
+const MIN_FR = 0.4;
+
+function resetTracks(): void {
+  colFr.value = Array(cols.value).fill(1);
+  rowFr.value = Array(rows.value).fill(1);
+}
+// Re-even the layout whenever the grid shape or the visible page changes.
+watch([cols, rows, () => uiStore.focusPage], resetTracks, { immediate: true });
+
+const gridStyle = computed(() => {
+  const c = colFr.value.length === cols.value ? colFr.value : Array(cols.value).fill(1);
+  const r = rowFr.value.length === rows.value ? rowFr.value : Array(rows.value).fill(1);
+  return {
+    gridTemplateColumns: c.map((f) => `${f}fr`).join(" "),
+    gridTemplateRows: r.map((f) => `${f}fr`).join(" "),
+  };
+});
 
 function tileStyle(index: number): Record<string, string> {
   if (emptyCells.value === 1 && index === 0) return { gridRow: "span 2" };
   return {};
+}
+
+// Gutter positions as a percentage across the grid (cumulative fractions).
+const colGutters = computed(() => {
+  const c = colFr.value;
+  if (c.length !== cols.value || c.length < 2) return [];
+  const total = c.reduce((a, b) => a + b, 0);
+  const out: { index: number; pct: number }[] = [];
+  let acc = 0;
+  for (let i = 0; i < c.length - 1; i++) {
+    acc += c[i];
+    out.push({ index: i, pct: (acc / total) * 100 });
+  }
+  return out;
+});
+const rowGutters = computed(() => {
+  const r = rowFr.value;
+  if (r.length !== rows.value || r.length < 2) return [];
+  const total = r.reduce((a, b) => a + b, 0);
+  const out: { index: number; pct: number }[] = [];
+  let acc = 0;
+  for (let i = 0; i < r.length - 1; i++) {
+    acc += r[i];
+    out.push({ index: i, pct: (acc / total) * 100 });
+  }
+  return out;
+});
+
+let gutterDrag:
+  | { axis: "col" | "row"; index: number; start: number; a: number; b: number; size: number; total: number }
+  | null = null;
+
+function beginGutterDrag(axis: "col" | "row", index: number, e: PointerEvent): void {
+  const grid = gridRef.value;
+  if (!grid) return;
+  e.preventDefault();
+  const arr = axis === "col" ? colFr.value : rowFr.value;
+  gutterDrag = {
+    axis,
+    index,
+    start: axis === "col" ? e.clientX : e.clientY,
+    a: arr[index],
+    b: arr[index + 1],
+    size: axis === "col" ? grid.clientWidth : grid.clientHeight,
+    total: arr.reduce((x, y) => x + y, 0),
+  };
+  window.addEventListener("pointermove", onGutterMove);
+  window.addEventListener("pointerup", onGutterUp);
+}
+
+function onGutterMove(e: PointerEvent): void {
+  if (!gutterDrag) return;
+  const { axis, index, start, a, b, size, total } = gutterDrag;
+  const delta = (axis === "col" ? e.clientX : e.clientY) - start;
+  const frPerPx = size > 0 ? total / size : 0;
+  let dFr = delta * frPerPx;
+  // Clamp so neither adjacent track falls below MIN_FR.
+  dFr = Math.max(MIN_FR - a, Math.min(b - MIN_FR, dFr));
+  const arr = axis === "col" ? [...colFr.value] : [...rowFr.value];
+  arr[index] = a + dFr;
+  arr[index + 1] = b - dFr;
+  if (axis === "col") colFr.value = arr;
+  else rowFr.value = arr;
+}
+
+function onGutterUp(): void {
+  window.removeEventListener("pointermove", onGutterMove);
+  window.removeEventListener("pointerup", onGutterUp);
+  gutterDrag = null;
+}
+
+// ─── Drag-to-swap tiles ──────────────────────────────────────────
+const draggingId = ref<string | null>(null);
+const dropTargetId = ref<string | null>(null);
+const ghostPos = ref({ x: 0, y: 0 });
+const ghostName = computed(() => {
+  const s = draggingId.value ? terminalStore.sessions.get(draggingId.value) : null;
+  return s ? s.manualName || s.autoName || s.name : "";
+});
+
+let dragPending: { id: string; startX: number; startY: number } | null = null;
+const DRAG_THRESHOLD = 6;
+
+function onTileDragStart(id: string, e: PointerEvent): void {
+  dragPending = { id, startX: e.clientX, startY: e.clientY };
+  ghostPos.value = { x: e.clientX, y: e.clientY };
+  window.addEventListener("pointermove", onSwapMove);
+  window.addEventListener("pointerup", onSwapEnd);
+}
+
+function tileIdAtPoint(x: number, y: number): string | null {
+  const el = document.elementFromPoint(x, y) as HTMLElement | null;
+  const tile = el?.closest<HTMLElement>("[data-focus-tile]");
+  return tile?.dataset.focusTile ?? null;
+}
+
+function onSwapMove(e: PointerEvent): void {
+  if (!dragPending) return;
+  ghostPos.value = { x: e.clientX, y: e.clientY };
+  if (!draggingId.value) {
+    const dx = e.clientX - dragPending.startX;
+    const dy = e.clientY - dragPending.startY;
+    if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+    draggingId.value = dragPending.id;
+    document.body.classList.add("focus-swap-dragging");
+  }
+  const over = tileIdAtPoint(e.clientX, e.clientY);
+  dropTargetId.value = over && over !== draggingId.value ? over : null;
+}
+
+function onSwapEnd(): void {
+  window.removeEventListener("pointermove", onSwapMove);
+  window.removeEventListener("pointerup", onSwapEnd);
+  if (draggingId.value && dropTargetId.value) {
+    uiStore.swapFocus(draggingId.value, dropTargetId.value);
+  }
+  draggingId.value = null;
+  dropTargetId.value = null;
+  dragPending = null;
+  document.body.classList.remove("focus-swap-dragging");
 }
 
 // Off-stage terminals that need attention -> surfaced as a banner (notify +
@@ -136,7 +277,16 @@ function onKeyDown(e: KeyboardEvent): void {
 }
 
 onMounted(() => window.addEventListener("keydown", onKeyDown));
-onUnmounted(() => window.removeEventListener("keydown", onKeyDown));
+onUnmounted(() => {
+  window.removeEventListener("keydown", onKeyDown);
+  // Tear down any in-flight drag listeners so nothing leaks if we exit
+  // Focus mode mid-gesture.
+  window.removeEventListener("pointermove", onSwapMove);
+  window.removeEventListener("pointerup", onSwapEnd);
+  window.removeEventListener("pointermove", onGutterMove);
+  window.removeEventListener("pointerup", onGutterUp);
+  document.body.classList.remove("focus-swap-dragging");
+});
 </script>
 
 <template>
@@ -213,12 +363,33 @@ onUnmounted(() => window.removeEventListener("keydown", onKeyDown));
         </button>
       </div>
 
-      <div v-else class="focus-grid" :style="gridStyle">
+      <div v-else ref="gridRef" class="focus-grid" :style="gridStyle">
         <FocusTile
           v-for="(session, i) in pageTiles"
           :key="session.id"
           :session="session"
           :style="tileStyle(i)"
+          :dragging-id="draggingId"
+          :drop-target-id="dropTargetId"
+          @drag-start="onTileDragStart"
+        />
+
+        <!-- Resize gutters: drag to reallocate space between tiles. -->
+        <div
+          v-for="g in colGutters"
+          :key="'col-' + g.index"
+          class="focus-gutter focus-gutter-col"
+          :style="{ left: g.pct + '%' }"
+          title="Drag to resize columns"
+          @pointerdown="beginGutterDrag('col', g.index, $event)"
+        />
+        <div
+          v-for="g in rowGutters"
+          :key="'row-' + g.index"
+          class="focus-gutter focus-gutter-row"
+          :style="{ top: g.pct + '%' }"
+          title="Drag to resize rows"
+          @pointerdown="beginGutterDrag('row', g.index, $event)"
         />
       </div>
 
@@ -226,6 +397,16 @@ onUnmounted(() => window.removeEventListener("keydown", onKeyDown));
       <div v-if="memorySession" class="focus-memory">
         <PromptRail :terminal-id="memorySession.id" />
       </div>
+    </div>
+
+    <!-- Floating label that follows the pointer while swapping tiles. -->
+    <div
+      v-if="draggingId"
+      class="focus-drag-ghost"
+      :style="{ left: ghostPos.x + 'px', top: ghostPos.y + 'px' }"
+    >
+      <ArrowLeftRight :size="14" />
+      <span>{{ ghostName }}</span>
     </div>
 
     <!-- Off-stage attention banner -->
@@ -371,11 +552,101 @@ onUnmounted(() => window.removeEventListener("keydown", onKeyDown));
 }
 
 .focus-grid {
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: grid;
   gap: 12px;
+}
+
+/* ─── Resize gutters ─── */
+.focus-gutter {
+  position: absolute;
+  z-index: 4;
+}
+
+.focus-gutter-col {
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  transform: translateX(-50%);
+  cursor: col-resize;
+}
+
+.focus-gutter-row {
+  left: 0;
+  right: 0;
+  height: 10px;
+  transform: translateY(-50%);
+  cursor: row-resize;
+}
+
+/* Thin bar that lights up on hover/drag so the handle is discoverable but
+   invisible at rest. */
+.focus-gutter::before {
+  content: "";
+  position: absolute;
+  border-radius: 2px;
+  background: transparent;
+  transition: background var(--tc-transition-fast);
+}
+
+.focus-gutter-col::before {
+  top: 10px;
+  bottom: 10px;
+  left: 50%;
+  width: 3px;
+  transform: translateX(-50%);
+}
+
+.focus-gutter-row::before {
+  left: 10px;
+  right: 10px;
+  top: 50%;
+  height: 3px;
+  transform: translateY(-50%);
+}
+
+.focus-gutter:hover::before,
+.focus-gutter:active::before {
+  background: var(--tc-accent);
+}
+
+/* ─── Swap drag ghost ─── */
+.focus-drag-ghost {
+  position: fixed;
+  z-index: 40;
+  transform: translate(14px, 14px);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--tc-accent);
+  color: #fff;
+  border-radius: var(--tc-border-radius-sm);
+  font-size: var(--tc-font-size-xs);
+  font-weight: 600;
+  box-shadow: var(--tc-shadow-lg);
+  pointer-events: none;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* While swapping, don't let the terminal bodies or gutters intercept the
+   pointer -- elementFromPoint needs to resolve to the tile under the cursor,
+   and terminals shouldn't grab focus mid-drag. (Global: these targets live in
+   child components / on <body>.) */
+:global(.focus-swap-dragging) {
+  cursor: grabbing;
+  user-select: none;
+}
+
+:global(.focus-swap-dragging .focus-tile-body),
+:global(.focus-swap-dragging .focus-gutter) {
+  pointer-events: none;
 }
 
 .focus-memory {

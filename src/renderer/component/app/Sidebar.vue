@@ -279,7 +279,7 @@ function handleLayerClick(
             </button>
           </div>
           <div class="layer-meta">
-            <span class="layer-shell">{{ session.shellName }}</span>
+            <span v-if="uiStore.showShellType" class="layer-shell">{{ session.shellName }}</span>
             <span class="layer-cwd" :title="session.cwd">{{ shortenCwd(session.cwd, 20) }}</span>
           </div>
         </div>

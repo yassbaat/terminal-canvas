@@ -6,10 +6,12 @@ import { useUIStore } from "@renderer/store/ui";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { shortenCwd } from "@renderer/util/path";
 import { AGENT_META } from "@renderer/util/agents";
-import { Bell, BellOff, Pencil, X, FolderOpen } from "lucide-vue-next";
+import { Bell, BellOff, Pencil, X, FolderOpen, Maximize2 } from "lucide-vue-next";
 
 const props = defineProps<{
   session: TerminalSession;
+  /** Show the "focus this terminal" button (canvas nodes only, not focus tiles). */
+  canFocus?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -17,6 +19,7 @@ const emit = defineEmits<{
   (e: "kill"): void;
   (e: "restart"): void;
   (e: "clear"): void;
+  (e: "focus-solo"): void;
 }>();
 
 const terminalStore = useTerminalStore();
@@ -103,7 +106,11 @@ function toggleOffDuty() {
 <template>
   <div class="terminal-header" :class="`header-style-${uiStore.headerStyle}`">
     <div class="header-main">
-      <div class="header-status-dot" :style="{ backgroundColor: statusColor }" />
+      <div
+        class="header-status-dot"
+        :style="{ backgroundColor: statusColor }"
+        :title="`Status: ${session.status}`"
+      />
       <div
         v-if="agentMeta"
         class="header-agent-glyph"
@@ -133,7 +140,7 @@ function toggleOffDuty() {
           >
             {{ agentMeta.label }}
           </span>
-          <span v-if="uiStore.headerStyle === 'comfortable'" class="header-shell-badge">{{ session.shellName }}</span>
+          <span v-if="uiStore.headerStyle === 'comfortable' && uiStore.showShellType" class="header-shell-badge">{{ session.shellName }}</span>
         </div>
         <div v-if="uiStore.headerStyle !== 'minimal'" class="header-cwd" :title="session.cwd">
           {{ projectLabel }}
@@ -141,6 +148,14 @@ function toggleOffDuty() {
       </div>
     </div>
     <div class="header-actions">
+      <button
+        v-if="canFocus"
+        class="header-btn header-btn-focus"
+        title="Focus this terminal (open it full-screen)"
+        @click.stop="emit('focus-solo')"
+      >
+        <Maximize2 class="header-btn-icon" :size="12" />
+      </button>
       <button
         v-if="uiStore.headerStyle !== 'minimal'"
         class="header-btn"
@@ -179,11 +194,14 @@ function toggleOffDuty() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 10px;
+  padding: 5px 10px;
   background: var(--tc-bg-header);
-  border-bottom: 1px solid var(--tc-border-color);
+  /* A slightly heavier divider than the card border so the header reads as a
+     distinct bar rather than blending into the terminal body -- part of making
+     the header legible across every style variant. */
+  border-bottom: 1px solid color-mix(in srgb, var(--tc-border-color) 100%, black 8%);
   flex-shrink: 0;
-  min-height: 44px;
+  min-height: 36px;
   cursor: grab;
 }
 
@@ -317,6 +335,18 @@ function toggleOffDuty() {
 .header-btn:hover {
   background: var(--tc-bg-hover);
   color: var(--tc-text-primary);
+}
+
+/* The focus button is a primary affordance -- tint it toward the accent so it
+   reads as "the way to zero in on this terminal", distinct from the utility
+   icons beside it. */
+.header-btn-focus {
+  color: var(--tc-accent);
+}
+
+.header-btn-focus:hover {
+  background: var(--tc-accent-soft);
+  color: var(--tc-accent);
 }
 
 .header-btn-active {
