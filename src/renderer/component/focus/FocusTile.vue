@@ -7,6 +7,9 @@ import { AGENT_META } from "@renderer/util/agents";
 import TerminalHeader from "@renderer/component/terminal/TerminalHeader.vue";
 import TerminalFooter from "@renderer/component/terminal/TerminalFooter.vue";
 import XtermView from "@renderer/component/terminal/XtermView.vue";
+import FileTabStrip from "@renderer/component/file/FileTabStrip.vue";
+import CodeView from "@renderer/component/file/CodeView.vue";
+import { useFileStore } from "@renderer/store/file";
 import { Minimize2, ArrowLeftRight } from "lucide-vue-next";
 
 const props = defineProps<{
@@ -32,6 +35,13 @@ const agentColor = computed(() =>
   props.session.activeAgent ? AGENT_META[props.session.activeAgent].color : null
 );
 const memoryOpen = computed(() => uiStore.focusMemoryTerminalId === props.session.id);
+
+// Open files follow the terminal onto the stage: the tabs come along, the file
+// explorer does not. A tree inside a tile fights the whole point of Focus Mode,
+// and the drawer is still there on the canvas when you need to pick a new file.
+const fileStore = useFileStore();
+const fileTabs = computed(() => fileStore.getTabs(props.session.id));
+const activeTab = computed(() => fileStore.getActiveTab(props.session.id));
 
 const isDragging = computed(() => props.draggingId === props.session.id);
 const isDropTarget = computed(
@@ -113,12 +123,27 @@ function onHeaderPointerDown(e: PointerEvent): void {
       <Minimize2 :size="13" />
     </button>
 
+    <FileTabStrip
+      v-if="fileTabs.length > 0"
+      :terminal-id="session.id"
+      :show-drawer-toggle="false"
+      class="focus-tile-tabs"
+    />
+
     <div class="focus-tile-body" @mousedown="focusBody">
+      <!-- Same rule as on the canvas: the xterm stays mounted behind an open
+           file so the PTY screen survives tab switching. -->
       <XtermView
         :terminal-id="session.id"
         :cols="session.cols"
         :rows="session.rows"
         @focus="focusBody"
+      />
+      <CodeView
+        v-if="activeTab"
+        class="focus-tile-code"
+        :path="activeTab"
+        :active="true"
       />
     </div>
 
@@ -246,11 +271,22 @@ function onHeaderPointerDown(e: PointerEvent): void {
 }
 
 .focus-tile-body {
+  position: relative;
   flex: 1;
   min-height: 0;
   background: var(--tc-terminal-bg);
   overflow: hidden;
   cursor: text;
+}
+
+.focus-tile-tabs {
+  flex-shrink: 0;
+}
+
+.focus-tile-code {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
 }
 
 .focus-tile-remove {

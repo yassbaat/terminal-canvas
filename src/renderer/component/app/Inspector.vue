@@ -7,7 +7,8 @@ import { formatDateTime } from "@renderer/util/format";
 import type { PromptEntry } from "@renderer/type/prompt";
 import PromptItem from "@renderer/component/terminal/PromptItem.vue";
 import { useResizeHandle } from "@renderer/composable/useResizeHandle";
-import { PanelRightClose } from "lucide-vue-next";
+import { PanelRightClose, ChevronUp } from "lucide-vue-next";
+import Sidebar from "@renderer/component/app/Sidebar.vue";
 
 const terminalStore = useTerminalStore();
 const promptStore = usePromptStore();
@@ -18,6 +19,33 @@ const { startResize } = useResizeHandle(
   (w) => uiStore.setInspectorWidth(w),
   "left"
 );
+
+/**
+ * Vertical divider between the two regions of this panel. useResizeHandle is
+ * width-only (it's shared by three horizontal panels), and one vertical drag
+ * doesn't justify generalizing it -- the Outline grows upward, so the delta is
+ * inverted.
+ */
+function startOutlineResize(event: MouseEvent): void {
+  event.preventDefault();
+  const startY = event.clientY;
+  const startHeight = uiStore.outlineHeight;
+
+  function onMove(e: MouseEvent): void {
+    uiStore.setOutlineHeight(startHeight - (e.clientY - startY));
+  }
+  function onUp(): void {
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", onUp);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  }
+
+  document.body.style.cursor = "row-resize";
+  document.body.style.userSelect = "none";
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseup", onUp);
+}
 
 const session = computed(() => terminalStore.focusedSession);
 const activeTab = computed({
@@ -93,6 +121,8 @@ function copyPromptText(text: string) {
 
 <template>
   <div class="inspector">
+    <!-- Top region: what's true of the focused session. -->
+    <div class="inspector-inspect">
     <div class="inspector-tabs">
       <button 
         class="inspector-tab" 
@@ -229,6 +259,24 @@ function copyPromptText(text: string) {
         </template>
       </div>
     </div>
+    </div>
+
+    <!-- Bottom region: workspace-wide navigation. Separate from the region
+         above because the two answer different questions -- "what is this
+         terminal" vs "what's in this workspace" -- and cramming four peer tabs
+         into one strip made both harder to scan. -->
+    <template v-if="uiStore.outlineVisible">
+      <div class="outline-resize-handle" @mousedown="startOutlineResize" />
+      <Sidebar
+        class="inspector-outline"
+        :style="{ height: uiStore.outlineHeight + 'px' }"
+      />
+    </template>
+    <button v-else class="outline-collapsed" @click="uiStore.toggleOutline()">
+      <ChevronUp :size="14" />
+      <span>Outline</span>
+    </button>
+
     <div class="inspector-resize-handle" @mousedown="startResize" />
   </div>
 </template>
@@ -316,10 +364,61 @@ function copyPromptText(text: string) {
   background: var(--tc-accent-soft);
 }
 
+/* Owns the tabs + scrolling detail; the Outline region is its sibling below. */
+.inspector-inspect {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .inspector-content {
   flex: 1;
   overflow-y: auto;
   padding: 12px;
+}
+
+.inspector-outline {
+  flex-shrink: 0;
+  border-top: 1px solid var(--tc-border-color);
+}
+
+.outline-resize-handle {
+  height: 6px;
+  margin-bottom: -3px;
+  cursor: row-resize;
+  flex-shrink: 0;
+  z-index: 5;
+}
+
+.outline-resize-handle:hover,
+.outline-resize-handle:active {
+  background: var(--tc-accent);
+  opacity: 0.5;
+}
+
+.outline-collapsed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 8px;
+  background: var(--tc-bg-header);
+  border: none;
+  border-top: 1px solid var(--tc-border-color);
+  color: var(--tc-text-muted);
+  font-size: var(--tc-font-size-xs);
+  font-family: var(--tc-font-sans);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+}
+
+.outline-collapsed:hover {
+  color: var(--tc-text-primary);
+  background: var(--tc-bg-hover);
 }
 
 .inspector-panel {

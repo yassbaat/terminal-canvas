@@ -29,7 +29,7 @@ const THEME_STORAGE_KEY = "terminal-canvas:theme";
 const SOUND_MUTED_KEY = "terminal-canvas:sound-muted";
 const IDLE_THRESHOLD_KEY = "terminal-canvas:idle-threshold-seconds";
 const DEFAULT_IDLE_THRESHOLD_SECONDS = 2;
-const SIDEBAR_WIDTH_KEY = "terminal-canvas:sidebar-width";
+const OUTLINE_HEIGHT_KEY = "terminal-canvas:outline-height";
 const INSPECTOR_WIDTH_KEY = "terminal-canvas:inspector-width";
 const MEMORY_RAIL_WIDTH_KEY = "terminal-canvas:memory-rail-width";
 const HEADER_STYLE_KEY = "terminal-canvas:terminal-header-style";
@@ -51,17 +51,24 @@ export const useUIStore = defineStore("ui", () => {
   // ─── Panel Visibility ────────────────────────────────────────────
   const inspectorVisible = ref(true);
   const inspectorTab = ref<InspectorTab>("prompt");
-  const sidebarVisible = ref(true);
+  /**
+   * The Outline region (Layers / Workspaces) at the bottom of the right panel.
+   * This used to be a separate left sidebar; it moved so the left edge of the
+   * canvas belongs entirely to the per-terminal file explorers, and so the two
+   * workspace-wide navigators sit next to the per-session inspectors instead of
+   * across the screen from them.
+   */
+  const outlineVisible = ref(true);
   const sidebarTab = ref<SidebarTab>("layers");
 
   // ─── Resizable Panel Widths ──────────────────────────────────────
-  const sidebarWidth = ref(readStoredWidth(SIDEBAR_WIDTH_KEY, 220));
+  const outlineHeight = ref(readStoredWidth(OUTLINE_HEIGHT_KEY, 260));
   const inspectorWidth = ref(readStoredWidth(INSPECTOR_WIDTH_KEY, 280));
   const memoryRailWidth = ref(readStoredWidth(MEMORY_RAIL_WIDTH_KEY, 220));
 
-  function setSidebarWidth(width: number): void {
-    sidebarWidth.value = Math.min(480, Math.max(160, width));
-    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth.value));
+  function setOutlineHeight(height: number): void {
+    outlineHeight.value = Math.min(700, Math.max(120, height));
+    localStorage.setItem(OUTLINE_HEIGHT_KEY, String(outlineHeight.value));
   }
 
   function setInspectorWidth(width: number): void {
@@ -366,18 +373,19 @@ export const useUIStore = defineStore("ui", () => {
   }
 
   /**
-   * Toggle the sidebar visibility.
+   * Toggle the Outline region (Layers / Workspaces).
    */
-  function toggleSidebar(): void {
-    sidebarVisible.value = !sidebarVisible.value;
+  function toggleOutline(): void {
+    outlineVisible.value = !outlineVisible.value;
   }
 
   /**
-   * Set the active sidebar tab.
+   * Set the active Outline tab.
    */
   function setSidebarTab(tab: SidebarTab): void {
     sidebarTab.value = tab;
-    sidebarVisible.value = true;
+    outlineVisible.value = true;
+    inspectorVisible.value = true;
   }
 
   /**
@@ -487,9 +495,9 @@ export const useUIStore = defineStore("ui", () => {
     // State
     inspectorVisible,
     inspectorTab,
-    sidebarVisible,
+    outlineVisible,
     sidebarTab,
-    sidebarWidth,
+    outlineHeight,
     inspectorWidth,
     memoryRailWidth,
     fileDrawerWidth,
@@ -526,9 +534,9 @@ export const useUIStore = defineStore("ui", () => {
     setIdleThresholdSeconds,
     toggleInspector,
     setInspectorTab,
-    toggleSidebar,
+    toggleOutline,
     setSidebarTab,
-    setSidebarWidth,
+    setOutlineHeight,
     setInspectorWidth,
     setMemoryRailWidth,
     setFileDrawerWidth,

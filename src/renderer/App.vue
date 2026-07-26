@@ -7,7 +7,6 @@ import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useUIStore } from "@renderer/store/ui";
 import Toolbar from "@renderer/component/app/Toolbar.vue";
 import Statusbar from "@renderer/component/app/Statusbar.vue";
-import Sidebar from "@renderer/component/app/Sidebar.vue";
 import Inspector from "@renderer/component/app/Inspector.vue";
 import HomeView from "@renderer/component/app/HomeView.vue";
 import WorkspaceCanvas from "@renderer/component/canvas/WorkspaceCanvas.vue";
@@ -16,7 +15,7 @@ import SettingsDialog from "@renderer/component/dialog/SettingsDialog.vue";
 import OnboardingDialog from "@renderer/component/dialog/OnboardingDialog.vue";
 import CommandPalette from "@renderer/component/dialog/CommandPalette.vue";
 import FocusMode from "@renderer/component/focus/FocusMode.vue";
-import { PanelLeftOpen, PanelRightOpen } from "lucide-vue-next";
+import { PanelRightOpen } from "lucide-vue-next";
 
 const terminalStore = useTerminalStore();
 const promptStore = usePromptStore();
@@ -281,25 +280,15 @@ onUnmounted(() => {
       <!-- Top toolbar -->
       <Toolbar class="app-toolbar" />
 
-      <!-- Main body: sidebar + canvas + inspector -->
+      <!-- Main body: canvas + right panel. The left edge belongs to the canvas
+           now -- Layers/Workspaces moved into the right panel's Outline region,
+           so per-terminal file explorers can extend out to the left without
+           fighting a global sidebar for the same space. -->
       <div class="app-body">
-        <Sidebar
-          v-show="uiStore.sidebarVisible"
-          class="app-sidebar"
-          :style="{ width: uiStore.sidebarWidth + 'px' }"
-        />
         <div class="app-canvas-area">
           <WorkspaceCanvas class="app-canvas" />
-          <!-- Edge re-open tabs: appear only when a panel is collapsed, right
-               where that panel would slide back in from. -->
-          <button
-            v-show="!uiStore.sidebarVisible"
-            class="panel-reopen panel-reopen-left"
-            title="Show sidebar"
-            @click="uiStore.toggleSidebar()"
-          >
-            <PanelLeftOpen :size="16" />
-          </button>
+          <!-- Edge re-open tab: appears only when the panel is collapsed, right
+               where it would slide back in from. -->
           <button
             v-show="!uiStore.inspectorVisible"
             class="panel-reopen panel-reopen-right"
@@ -361,12 +350,6 @@ onUnmounted(() => {
   min-height: 0;
 }
 
-.app-sidebar {
-  flex-shrink: 0;
-  z-index: var(--tc-z-sidebar);
-  position: relative;
-}
-
 .app-canvas-area {
   flex: 1;
   position: relative;
@@ -374,8 +357,8 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-/* Edge tabs that bring a collapsed sidebar/inspector back. Pinned to the
-   canvas edges (near where each panel lives) and vertically centered. */
+/* Edge tab that brings the collapsed right panel back. Pinned to the canvas
+   edge (near where the panel lives) and vertically centered. */
 .panel-reopen {
   position: absolute;
   top: 50%;
@@ -397,12 +380,6 @@ onUnmounted(() => {
 .panel-reopen:hover {
   color: var(--tc-accent);
   background: var(--tc-bg-hover);
-}
-
-.panel-reopen-left {
-  left: 0;
-  border-left: none;
-  border-radius: 0 var(--tc-border-radius) var(--tc-border-radius) 0;
 }
 
 .panel-reopen-right {

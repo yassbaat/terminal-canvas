@@ -5,9 +5,8 @@ import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useUIStore } from "@renderer/store/ui";
 import { shortenCwd } from "@renderer/util/path";
 import { AGENT_META } from "@renderer/util/agents";
-import { useResizeHandle } from "@renderer/composable/useResizeHandle";
 import { useVueFlow } from "@vue-flow/core";
-import { Folder, StickyNote, Bell, X, PanelLeftClose } from "lucide-vue-next";
+import { Folder, StickyNote, Bell, X, ChevronDown } from "lucide-vue-next";
 
 const terminalStore = useTerminalStore();
 const workspaceStore = useWorkspaceStore();
@@ -15,12 +14,6 @@ const uiStore = useUIStore();
 // Same shared canvas store instance as WorkspaceCanvas.vue/Toolbar.vue (see
 // their comments on why an explicit id is required here).
 const { setCenter, getViewport } = useVueFlow("canvas");
-
-const { startResize } = useResizeHandle(
-  () => uiStore.sidebarWidth,
-  (w) => uiStore.setSidebarWidth(w),
-  "right"
-);
 
 // The list was previously never fetched at all, so this tab always rendered
 // as permanently empty regardless of how many workspaces were actually
@@ -187,10 +180,10 @@ function handleLayerClick(
       </button>
       <button
         class="sidebar-collapse-btn"
-        title="Collapse sidebar"
-        @click="uiStore.toggleSidebar()"
+        title="Collapse Outline"
+        @click="uiStore.toggleOutline()"
       >
-        <PanelLeftClose :size="15" />
+        <ChevronDown :size="15" />
       </button>
     </div>
 
@@ -317,40 +310,19 @@ function handleLayerClick(
         </div>
       </div>
     </div>
-    <div class="sidebar-resize-handle" @mousedown="startResize" />
   </div>
 </template>
 
 <style scoped>
+/* Rendered as the Outline region inside the right panel (see Inspector.vue),
+   so it fills its container rather than owning a width or a border of its own. */
 .sidebar {
   display: flex;
   flex-direction: column;
   height: 100%;
   background: var(--tc-bg-card);
-  border-right: 1px solid var(--tc-border-color);
   overflow: hidden;
   position: relative;
-}
-
-.sidebar-resize-handle {
-  position: absolute;
-  top: 0;
-  /* Wider than it looks: the handle is invisible until hover, so growing
-     the hit area doesn't add visual weight, just makes it easier to grab.
-     Stays at right: 0 (not negative) -- .sidebar has overflow: hidden, so
-     any part of the handle sitting outside its box gets silently clipped
-     and becomes unclickable there. */
-  right: 0;
-  width: 12px;
-  height: 100%;
-  cursor: col-resize;
-  z-index: 5;
-}
-
-.sidebar-resize-handle:hover,
-.sidebar-resize-handle:active {
-  background: var(--tc-accent);
-  opacity: 0.5;
 }
 
 .sidebar-tabs {

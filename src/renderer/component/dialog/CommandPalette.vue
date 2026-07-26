@@ -45,7 +45,7 @@ const commands = computed<Command[]>(() => {
     },
     { id: "save-workspace", label: "Save Workspace", shortcut: "Ctrl+S", action: async () => { await workspaceStore.saveCurrentWorkspace(); uiStore.showToast("Saved"); } },
     { id: "new-workspace", label: "New Workspace", action: () => { workspaceStore.createNewWorkspace(); } },
-    { id: "toggle-sidebar", label: "Toggle Sidebar", action: () => { uiStore.sidebarVisible = !uiStore.sidebarVisible; } },
+    { id: "toggle-outline", label: "Toggle Outline (Layers & Workspaces)", action: () => uiStore.toggleOutline() },
     { id: "toggle-inspector", label: "Toggle Inspector", action: () => { uiStore.inspectorVisible = !uiStore.inspectorVisible; } },
     { id: "open-settings", label: "Groq Settings", action: () => { uiStore.groqSettingsOpen = true; } },
   ];

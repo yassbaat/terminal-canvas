@@ -10,11 +10,16 @@ import { getBasename } from "@renderer/util/path";
  * empty canvas detaches it into its own node -- the drop is handled by
  * WorkspaceCanvas, this just seeds the drag payload.
  */
-const props = defineProps<{
-  terminalId: string;
-  /** Whether the file drawer is currently showing, for the toggle button. */
-  drawerOpen: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    terminalId: string;
+    /** Whether the file drawer is currently showing, for the toggle button. */
+    drawerOpen?: boolean;
+    /** Off on the Focus stage, which carries tabs but no file explorer. */
+    showDrawerToggle?: boolean;
+  }>(),
+  { drawerOpen: false, showDrawerToggle: true }
+);
 
 const emit = defineEmits<{
   (e: "toggle-drawer"): void;
@@ -67,6 +72,7 @@ function handleDragEnd(): void {
 <template>
   <div class="tab-strip nodrag">
     <button
+      v-if="showDrawerToggle"
       class="tab-drawer-toggle"
       :class="{ on: drawerOpen }"
       :title="drawerOpen ? 'Hide file explorer' : 'Show file explorer'"
