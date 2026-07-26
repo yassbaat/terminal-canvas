@@ -216,11 +216,17 @@ watch(
   () => syncDocFromStore()
 );
 
-// The editor can't exist before the first read resolves.
+/**
+ * The editor can't exist before the first read resolves, and the entry itself
+ * may not exist yet either -- a canvas file node calls open() from its own
+ * onMounted, which runs *after* this child's. Watching "is there a loaded
+ * entry" rather than a loading -> loaded transition covers both orders: the
+ * file arriving late, and it already being open on another surface.
+ */
 watch(
-  () => entry.value?.loading,
-  async (loading, was) => {
-    if (was && !loading && hydrated.value && !view.value) {
+  () => !!entry.value && !entry.value.loading,
+  async (ready) => {
+    if (ready && hydrated.value && !view.value) {
       await nextTick();
       await mountEditor();
     }

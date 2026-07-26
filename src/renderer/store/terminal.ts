@@ -203,6 +203,26 @@ export const useTerminalStore = defineStore("terminal", () => {
   /**
    * Update arbitrary session properties.
    */
+  /**
+   * Apply a file-drawer width change to every node that currently has one open.
+   *
+   * The drawer width is a single global preference, but each open drawer's width
+   * is baked into its node's x/width. Without this, resizing one terminal's
+   * drawer would leave every other open drawer rendering at the new width inside
+   * a box sized for the old one -- and closing it would then subtract a number
+   * that was never added, permanently shrinking the node.
+   */
+  function adjustOpenDrawerNodes(delta: number, exceptId?: string): void {
+    if (delta === 0) return;
+    for (const session of sessions.value.values()) {
+      if (!session.fileDrawerOpen || session.id === exceptId) continue;
+      updateNode(session.id, {
+        x: session.node.x - delta,
+        width: session.node.width + delta,
+      });
+    }
+  }
+
   function updateSession(id: string, patch: Partial<TerminalSession>): void {
     const s = sessions.value.get(id);
     if (s) {
@@ -485,6 +505,7 @@ export const useTerminalStore = defineStore("terminal", () => {
     restartSession,
     updateSession,
     updateNode,
+    adjustOpenDrawerNodes,
     removeSession,
     setFocused,
     setSelected,

@@ -164,10 +164,14 @@ const { startResize: startDrawerResize } = useResizeHandle(
   () => uiStore.fileDrawerWidth,
   (w) => {
     // Growing the drawer must grow the node too, or it would eat the terminal.
+    // The width is a global preference, so every *other* open drawer's node has
+    // to move with it -- otherwise closing one of them would subtract a width it
+    // was never opened at.
     const delta = uiStore.setFileDrawerWidth(w);
     if (delta === 0) return;
     const node = props.data.session.node;
     terminalStore.updateNode(props.id, { x: node.x - delta, width: node.width + delta });
+    terminalStore.adjustOpenDrawerNodes(delta, props.id);
   },
   "right",
   canvasScale
