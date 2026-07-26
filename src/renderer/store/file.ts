@@ -305,6 +305,18 @@ export const useFileStore = defineStore("file", () => {
       const entry = files.value.get(event.path);
       if (!entry) return;
 
+      // Our own save fires this watcher. Without this check, saving and then
+      // continuing to type inside the 120ms watcher debounce would find the
+      // buffer dirty again and raise a "changed on disk" conflict banner for
+      // the user's own write. Comparing against the mtime `file:write` handed
+      // back also swallows spurious watcher fires with no real change.
+      try {
+        const stat = await window.api.file.stat(event.path);
+        if (stat.exists && stat.mtimeMs === entry.mtimeMs) return;
+      } catch {
+        // Can't stat it -- fall through and let the reload path report why.
+      }
+
       const dirty = entry.draft !== entry.content;
       if (dirty) {
         // Never clobber unsaved edits. The editor shows a banner and the user
