@@ -2,15 +2,17 @@
 import { computed } from "vue";
 import type { TerminalSession } from "@renderer/type/terminal";
 import { usePromptStore } from "@renderer/store/prompt";
-import { NotebookPen } from "lucide-vue-next";
+import { NotebookPen, FolderTree } from "lucide-vue-next";
 
 const props = defineProps<{
   session: TerminalSession;
   memoryVisible?: boolean;
+  filesVisible?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: "toggleMemory"): void;
+  (e: "toggleFiles"): void;
 }>();
 
 const promptStore = usePromptStore();
@@ -29,6 +31,14 @@ const statusClass = computed(() => `status-${props.session.status}`);
       <span class="footer-dim">{{ session.cols }}&#215;{{ session.rows }}</span>
     </div>
     <div class="footer-right">
+      <span
+        class="footer-prompt-count"
+        :class="{ 'footer-prompt-count-active': filesVisible }"
+        :title="filesVisible ? 'Hide file explorer' : 'Show file explorer'"
+        @click="emit('toggleFiles')"
+      >
+        <FolderTree :size="11" />
+      </span>
       <span
         class="footer-prompt-count"
         :class="{ 'footer-prompt-count-active': memoryVisible }"

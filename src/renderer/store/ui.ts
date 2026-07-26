@@ -35,6 +35,7 @@ const MEMORY_RAIL_WIDTH_KEY = "terminal-canvas:memory-rail-width";
 const HEADER_STYLE_KEY = "terminal-canvas:terminal-header-style";
 const NEW_ITEM_PLACEMENT_KEY = "terminal-canvas:new-item-placement";
 const SHOW_SHELL_TYPE_KEY = "terminal-canvas:show-shell-type";
+const FILE_DRAWER_WIDTH_KEY = "terminal-canvas:file-drawer-width";
 
 function readStoredWidth(key: string, fallback: number): number {
   const raw = localStorage.getItem(key);
@@ -71,6 +72,22 @@ export const useUIStore = defineStore("ui", () => {
   function setMemoryRailWidth(width: number): void {
     memoryRailWidth.value = Math.min(480, Math.max(160, width));
     localStorage.setItem(MEMORY_RAIL_WIDTH_KEY, String(memoryRailWidth.value));
+  }
+
+  // ─── File explorer drawer (per-terminal, on the canvas) ──────────
+  const fileDrawerWidth = ref(readStoredWidth(FILE_DRAWER_WIDTH_KEY, 240));
+
+  /**
+   * Returns how much the width actually changed after clamping. The drawer
+   * lives inside a canvas node whose box has to grow by the same amount, and
+   * that caller needs the clamped delta, not the requested one -- otherwise
+   * dragging past the limit keeps widening the node while the drawer stays put.
+   */
+  function setFileDrawerWidth(width: number): number {
+    const previous = fileDrawerWidth.value;
+    fileDrawerWidth.value = Math.min(480, Math.max(160, width));
+    localStorage.setItem(FILE_DRAWER_WIDTH_KEY, String(fileDrawerWidth.value));
+    return fileDrawerWidth.value - previous;
   }
 
   // ─── Terminal Header Style ───────────────────────────────────────
@@ -475,6 +492,7 @@ export const useUIStore = defineStore("ui", () => {
     sidebarWidth,
     inspectorWidth,
     memoryRailWidth,
+    fileDrawerWidth,
     headerStyle,
     showShellType,
     newItemPlacement,
@@ -513,6 +531,7 @@ export const useUIStore = defineStore("ui", () => {
     setSidebarWidth,
     setInspectorWidth,
     setMemoryRailWidth,
+    setFileDrawerWidth,
     setHeaderStyle,
     setShowShellType,
     setNewItemPlacement,

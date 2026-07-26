@@ -6,6 +6,7 @@ import { useUIStore } from "@renderer/store/ui";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { usePromptStore } from "@renderer/store/prompt";
 import { useSummaryStore } from "@renderer/store/summary";
+import { useFileStore } from "@renderer/store/file";
 import { Handle, Position } from "@vue-flow/core";
 import { NodeResizer } from "@vue-flow/node-resizer";
 import { AGENT_META } from "@renderer/util/agents";
@@ -15,6 +16,9 @@ import TerminalHeader from "@renderer/component/terminal/TerminalHeader.vue";
 import TerminalFooter from "@renderer/component/terminal/TerminalFooter.vue";
 import XtermView from "@renderer/component/terminal/XtermView.vue";
 import PromptRail from "@renderer/component/terminal/PromptRail.vue";
+import FileDrawer from "@renderer/component/file/FileDrawer.vue";
+import FileTabStrip from "@renderer/component/file/FileTabStrip.vue";
+import CodeView from "@renderer/component/file/CodeView.vue";
 
 // Props from Vue Flow node definition
 const props = defineProps<{
@@ -100,11 +104,84 @@ const showHoverPreview = computed(
 );
 const inverseZoom = computed(() => 1 / (workspaceStore.viewport.zoom || 1));
 
+// Both rails live inside the zoomable canvas, so the drag delta has to be
+// divided by the current zoom or the rail resizes at a different rate than the
+// cursor moves.
+const canvasScale = () => workspaceStore.viewport.zoom || 1;
+
 const { startResize: startMemoryResize } = useResizeHandle(
   () => uiStore.memoryRailWidth,
   (w) => uiStore.setMemoryRailWidth(w),
-  "left"
+  "left",
+  canvasScale
 );
+
+// ─── File explorer drawer + file tabs ──────────────────────────────
+
+const fileStore = useFileStore();
+
+const drawerOpen = computed(() => props.data.session.fileDrawerOpen);
+const minNodeWidth = computed(() => 300 + (drawerOpen.value ? uiStore.fileDrawerWidth : 0));
+const fileRoot = computed(() => props.data.session.fileRoot || props.data.session.cwd);
+const activeTab = computed(() => fileStore.getActiveTab(props.id));
+const hasTabs = computed(() => fileStore.getTabs(props.id).length > 0);
+
+/**
+ * The drawer grows the node leftward rather than eating into the terminal: the
+ * terminal stays exactly where it was on the canvas and the explorer claims new
+ * space beside it. Keeping node.x/width authoritative (instead of offsetting at
+ * render time) means drag, resize, the minimap and workspace saves all keep
+ * agreeing about where this node actually is -- which is also why the open flag
+ * is persisted on the session alongside the geometry it changed.
+ */
+function toggleDrawer(): void {
+  const width = uiStore.fileDrawerWidth;
+  const node = props.data.session.node;
+  const opening = !drawerOpen.value;
+
+  terminalStore.updateNode(props.id, {
+    x: node.x + (opening ? -width : width),
+    width: Math.max(300, node.width + (opening ? width : -width)),
+  });
+  terminalStore.updateSession(props.id, { fileDrawerOpen: opening });
+
+  // Groups are fixed frames, not auto-fitted boxes, so a node growing left can
+  // poke out of its own group. Membership isn't affected (that's only
+  // recomputed on drag), but the frame should still contain what it owns.
+  if (opening && props.data.session.groupId) {
+    const group = workspaceStore.groups.find((g) => g.id === props.data.session.groupId);
+    const newLeft = node.x - width;
+    if (group && newLeft < group.x) {
+      workspaceStore.updateGroup(group.id, {
+        x: newLeft - 12,
+        width: group.width + (group.x - newLeft) + 12,
+      });
+    }
+  }
+}
+
+const { startResize: startDrawerResize } = useResizeHandle(
+  () => uiStore.fileDrawerWidth,
+  (w) => {
+    // Growing the drawer must grow the node too, or it would eat the terminal.
+    const delta = uiStore.setFileDrawerWidth(w);
+    if (delta === 0) return;
+    const node = props.data.session.node;
+    terminalStore.updateNode(props.id, { x: node.x - delta, width: node.width + delta });
+  },
+  "right",
+  canvasScale
+);
+
+function openFile(path: string): void {
+  void fileStore.openInTerminal(props.id, path);
+  terminalStore.setFocused(props.id);
+}
+
+function changeFileRoot(dir: string): void {
+  terminalStore.updateSession(props.id, { fileRoot: dir, fileRootPinned: true });
+  void window.api.terminal.setFileRoot(props.id, dir);
+}
 
 // Is this terminal currently focused?
 const isFocused = computed(
@@ -187,7 +264,9 @@ watch(
     @mouseleave="handleMouseLeave"
   >
     <Handle type="target" :position="Position.Top" />
-    <NodeResizer :min-width="300" :min-height="200" />
+    <!-- The drawer's width is part of the node box while it's open, so the
+         minimum has to grow with it or resizing crushes the file tree. -->
+    <NodeResizer :min-width="minNodeWidth" :min-height="200" />
 
     <!-- Zoomed-out hover preview: name + last prompt, counter-scaled so it
          stays readable however far out the canvas is zoomed. -->
@@ -217,53 +296,92 @@ watch(
       <Bell :size="13" />
     </button>
     <div class="terminal-node-inner">
-      <div
-        v-if="agentColor"
-        class="terminal-agent-accent"
-        :style="{ background: agentColor }"
-      />
-      <!-- Header: drag handle + session info + controls -->
-      <TerminalHeader
-        :session="data.session"
-        :can-focus="true"
-        @focus="terminalStore.setFocused(id)"
-        @focus-solo="focusSolo"
-        @kill="handleKill"
-        @restart="handleRestart"
-        @clear="handleClear"
-      />
-
-      <!-- Body: xterm terminal + optional prompt rail -->
-      <div class="terminal-node-body nodrag">
-        <div class="terminal-area" @click.stop="handleBodyClick">
-          <XtermView
-            v-if="!isStaged"
-            :terminal-id="data.session.id"
-            :cols="data.session.cols"
-            :rows="data.session.rows"
-            @focus="terminalStore.setFocused(id)"
-          />
-          <div v-else class="terminal-staged-note">On the focus stage</div>
-        </div>
-        <div
-          v-show="showPromptRail"
-          class="memory-resize-handle"
-          @mousedown.stop="startMemoryResize"
+      <!-- File explorer, occupying the space the node grew into on its left. -->
+      <template v-if="drawerOpen">
+        <FileDrawer
+          class="terminal-file-drawer"
+          :style="{ '--file-drawer-width': uiStore.fileDrawerWidth + 'px' }"
+          :terminal-id="id"
+          :root="fileRoot"
+          :active-path="activeTab"
+          @open="openFile"
+          @close="toggleDrawer"
+          @root-change="changeFileRoot"
         />
-        <PromptRail
-          v-show="showPromptRail"
-          :terminal-id="data.session.id"
-          class="terminal-memory"
-          :style="{ '--memory-rail-width': uiStore.memoryRailWidth + 'px' }"
+        <div class="drawer-resize-handle" @mousedown.stop="startDrawerResize" />
+      </template>
+
+      <div class="terminal-main">
+        <div
+          v-if="agentColor"
+          class="terminal-agent-accent"
+          :style="{ background: agentColor }"
+        />
+        <!-- Header: drag handle + session info + controls -->
+        <TerminalHeader
+          :session="data.session"
+          :can-focus="true"
+          @focus="terminalStore.setFocused(id)"
+          @focus-solo="focusSolo"
+          @kill="handleKill"
+          @restart="handleRestart"
+          @clear="handleClear"
+        />
+
+        <!-- Tabs appear only once there's something to switch between; a lone
+             "Terminal" tab on every node would be pure chrome. -->
+        <FileTabStrip
+          v-if="hasTabs || drawerOpen"
+          :terminal-id="id"
+          :drawer-open="drawerOpen"
+          @toggle-drawer="toggleDrawer"
+        />
+
+        <!-- Body: xterm terminal + optional prompt rail -->
+        <div class="terminal-node-body nodrag">
+          <div class="terminal-area" @click.stop="handleBodyClick">
+            <!-- The xterm stays mounted behind an open file: unmounting it
+                 resets the PTY screen, and display:none breaks FitAddon's
+                 measurements. The editor simply covers it. -->
+            <XtermView
+              v-if="!isStaged"
+              :terminal-id="data.session.id"
+              :cols="data.session.cols"
+              :rows="data.session.rows"
+              @focus="terminalStore.setFocused(id)"
+            />
+            <div v-else-if="!activeTab" class="terminal-staged-note">On the focus stage</div>
+
+            <CodeView
+              v-if="activeTab"
+              class="terminal-code-overlay"
+              :path="activeTab"
+              :zoom="workspaceStore.viewport.zoom"
+              :active="isFocused"
+            />
+          </div>
+          <div
+            v-show="showPromptRail"
+            class="memory-resize-handle"
+            @mousedown.stop="startMemoryResize"
+          />
+          <PromptRail
+            v-show="showPromptRail"
+            :terminal-id="data.session.id"
+            class="terminal-memory"
+            :style="{ '--memory-rail-width': uiStore.memoryRailWidth + 'px' }"
+          />
+        </div>
+
+        <!-- Footer: CWD + dimensions -->
+        <TerminalFooter
+          :session="data.session"
+          :memory-visible="showPromptRail"
+          :files-visible="drawerOpen"
+          @toggle-memory="showPromptRail = !showPromptRail"
+          @toggle-files="toggleDrawer"
         />
       </div>
-
-      <!-- Footer: CWD + dimensions -->
-      <TerminalFooter
-        :session="data.session"
-        :memory-visible="showPromptRail"
-        @toggle-memory="showPromptRail = !showPromptRail"
-      />
 
       <!-- Resize handled by NodeResizer -->
     </div>
@@ -342,7 +460,9 @@ watch(
   width: 100%;
   height: 100%;
   display: flex;
-  flex-direction: column;
+  /* Row, not column: the file drawer sits beside the terminal, which keeps its
+     own header/tabs/footer stack inside .terminal-main. */
+  flex-direction: row;
   background: var(--tc-bg-card);
   border: 1px solid var(--tc-border-color);
   border-radius: var(--tc-border-radius);
@@ -381,6 +501,40 @@ watch(
 
 .terminal-node.selected :deep(.header-name:hover) {
   text-decoration-color: #fff;
+}
+
+.terminal-main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.terminal-file-drawer {
+  width: var(--file-drawer-width, 240px);
+  flex-shrink: 0;
+}
+
+.drawer-resize-handle {
+  width: 4px;
+  margin-left: -2px;
+  margin-right: -2px;
+  cursor: col-resize;
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+.drawer-resize-handle:hover {
+  background: var(--tc-accent-soft);
+}
+
+/* Covers the xterm rather than replacing it -- see the template comment. */
+.terminal-code-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
 }
 
 .terminal-node.focused .terminal-node-inner {
@@ -451,6 +605,8 @@ watch(
 }
 
 .terminal-area {
+  /* Positioned so an open file can be laid over the still-mounted xterm. */
+  position: relative;
   flex: 1;
   min-width: 0;
   background: var(--tc-terminal-bg);

@@ -315,6 +315,7 @@ export class TerminalManager {
       fileRootPinned: false,
       openFiles: [],
       activeFile: null,
+      fileDrawerOpen: false,
       status: "starting",
       pid: pty.pid,
       createdAt: now,
@@ -930,14 +931,6 @@ export class TerminalManager {
         fileRoot: dir,
       });
     }
-  }
-
-  /** Remember which files a terminal has open, so a saved workspace can restore its tabs. */
-  setOpenFiles(id: string, openFiles: string[], activeFile: string | null): void {
-    const active = this.terminals.get(id);
-    if (!active) return;
-    active.session.openFiles = openFiles;
-    active.session.activeFile = activeFile;
   }
 
   /**

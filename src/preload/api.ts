@@ -33,8 +33,6 @@ const terminal: TerminalAPI = {
   setIdleDetectionEnabled: (terminalId, enabled) =>
     ipcRenderer.invoke("terminal:setIdleDetectionEnabled", { terminalId, enabled }),
   setFileRoot: (terminalId, dir) => ipcRenderer.invoke("terminal:setFileRoot", { terminalId, dir }),
-  setOpenFiles: (terminalId, openFiles, activeFile) =>
-    ipcRenderer.invoke("terminal:setOpenFiles", { terminalId, openFiles, activeFile }),
 
   onData: (callback: (event: TerminalDataEvent) => void) => {
     const handler = (_: unknown, data: TerminalDataEvent) => callback(data);

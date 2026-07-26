@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { usePromptStore } from "@renderer/store/prompt";
+import { useFileStore } from "@renderer/store/file";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useUIStore } from "@renderer/store/ui";
 import Toolbar from "@renderer/component/app/Toolbar.vue";
@@ -19,6 +20,7 @@ import { PanelLeftOpen, PanelRightOpen } from "lucide-vue-next";
 
 const terminalStore = useTerminalStore();
 const promptStore = usePromptStore();
+const fileStore = useFileStore();
 const workspaceStore = useWorkspaceStore();
 const uiStore = useUIStore();
 
@@ -225,6 +227,7 @@ onMounted(() => {
     // Initialize terminal IPC listeners
     terminalStore.setupListeners();
     promptStore.setupListeners();
+    fileStore.setupListeners();
     // Load available shells from the system
     terminalStore.loadShells();
     // Main process's idle-threshold defaults fresh each launch; push the

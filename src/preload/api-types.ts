@@ -36,8 +36,6 @@ export interface TerminalAPI {
   setIdleDetectionEnabled(terminalId: string, enabled: boolean): Promise<void>;
   /** Pin the file explorer to a folder, and grant the renderer access to that tree. */
   setFileRoot(terminalId: string, dir: string): Promise<void>;
-  /** Mirror the open file tabs into main so a saved workspace can restore them. */
-  setOpenFiles(terminalId: string, openFiles: string[], activeFile: string | null): Promise<void>;
   onData(callback: (event: TerminalDataEvent) => void): () => void;
   onExit(callback: (event: TerminalExitEvent) => void): () => void;
   onCwdChanged(callback: (event: TerminalCwdEvent) => void): () => void;

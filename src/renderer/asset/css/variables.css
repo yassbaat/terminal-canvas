@@ -48,6 +48,39 @@
   --tc-terminal-bg: #0d0d1a;
   --tc-terminal-text: #e0e0e0;
 
+  /* Code editor -- syntax token colors.
+     Defined once, not per theme, because the editor sits on the terminal
+     surface (--tc-terminal-bg), which is deliberately dark in both light and
+     dark mode. Switching between a terminal tab and a file tab inside the same
+     node would otherwise strobe from dark to light. The hues deliberately reuse
+     the app palette (accent crimson, success mint, warning amber, info blue) so
+     code reads as part of the same product rather than a pasted-in editor. */
+  --tc-editor-bg: var(--tc-terminal-bg);
+  --tc-editor-fg: #d7d7f0;
+  --tc-editor-gutter-fg: #55557a;
+  --tc-editor-gutter-active-fg: #a0a0c0;
+  --tc-editor-active-line: rgba(255, 255, 255, 0.035);
+  --tc-editor-selection: rgba(100, 181, 246, 0.28);
+  --tc-editor-cursor: #e94560;
+  --tc-editor-match: rgba(78, 204, 163, 0.25);
+
+  --tc-syn-comment: #6a6a8a;
+  --tc-syn-keyword: #ff7b9c;
+  --tc-syn-string: #4ecca3;
+  --tc-syn-number: #f9a825;
+  --tc-syn-function: #64b5f6;
+  --tc-syn-variable: #d7d7f0;
+  --tc-syn-property: #b3a1ff;
+  --tc-syn-type: #7fd6ff;
+  --tc-syn-constant: #ff9f68;
+  --tc-syn-operator: #a0a0c0;
+  --tc-syn-punctuation: #8a88a8;
+  --tc-syn-tag: #ff7b9c;
+  --tc-syn-attribute: #f9a825;
+  --tc-syn-heading: #64b5f6;
+  --tc-syn-link: #64b5f6;
+  --tc-syn-invalid: #ff5370;
+
   /* Agent Memory (Prompt Rail) */
   --tc-memory-bg: #181828;
   --tc-memory-border: #2a2a42;

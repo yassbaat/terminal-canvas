@@ -116,13 +116,5 @@ export function registerTerminalIPC(window: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle("terminal:setOpenFiles", async (_, { terminalId, openFiles, activeFile }) => {
-    try {
-      terminalManager.setOpenFiles(terminalId, openFiles ?? [], activeFile ?? null);
-    } catch (error) {
-      logger.error(`IPC: terminal:setOpenFiles failed for ${terminalId}`, error);
-    }
-  });
-
   logger.info("Terminal IPC handlers registered");
 }

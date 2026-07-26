@@ -54,6 +54,12 @@ export interface TerminalSession {
   openFiles: string[];
   /** Which of `openFiles` is showing, or null when the terminal tab is active. */
   activeFile: string | null;
+  /**
+   * Whether the file explorer drawer is showing. Persisted with the workspace
+   * because `node.width`/`node.x` include the drawer while it's open -- restoring
+   * one without the other would leave a gap where the drawer used to be.
+   */
+  fileDrawerOpen: boolean;
   status: "starting" | "running" | "exited" | "crashed" | "killed";
   pid: number | null;
   createdAt: number;
