@@ -3,6 +3,7 @@ import { ref, computed } from "vue";
 import type {
   Workspace,
   Group,
+  FileNode,
   WorkspaceSettings,
   WorkspaceSummary,
 } from "@renderer/type/workspace";
@@ -10,6 +11,7 @@ import type { GroupNamingContext } from "@renderer/type/groq";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { usePromptStore } from "@renderer/store/prompt";
 import { useUIStore } from "@renderer/store/ui";
+import { useFileStore } from "@renderer/store/file";
 import { generateId } from "@renderer/util/ids";
 
 const DEFAULT_SETTINGS: WorkspaceSettings = {
@@ -51,6 +53,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const lastSavedAt = ref<number | null>(null);
   const selectedNoteIds = ref<Set<string>>(new Set());
   const selectedGroupIds = ref<Set<string>>(new Set());
+  const selectedFileIds = ref<Set<string>>(new Set());
   const fitViewTargetId = ref<string | null>(null);
 
   // ─── Getters ─────────────────────────────────────────────────────
@@ -77,6 +80,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   const stickyNotes = computed(() => currentWorkspace.value?.stickyNotes || []);
 
+  const fileNodes = computed(() => currentWorkspace.value?.files || []);
+
   // ─── Actions ─────────────────────────────────────────────────────
 
   /**
@@ -93,6 +98,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       groups: [],
       edges: [],
       stickyNotes: [],
+      files: [],
       promptHistory: [],
       settings: { ...DEFAULT_SETTINGS },
     };
@@ -164,6 +170,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     // be in the JSON at all, and it's just a plain parse with no validation
     // on the way in (see workspace-service.ts's loadWorkspace).
     currentWorkspace.value.groups = ws.groups.map((g) => ({ ...g, noteIds: g.noteIds ?? [] }));
+    // Workspaces saved before canvas file nodes existed have no `files` key at
+    // all, and load does a plain JSON.parse with no validation.
+    currentWorkspace.value.files = ws.files ?? [];
     lastSavedAt.value = Date.now();
 
     const terminalStore = useTerminalStore();
@@ -201,6 +210,25 @@ export const useWorkspaceStore = defineStore("workspace", () => {
           terminalStore.updateSessionName(session.id, saved.manualName);
         } else if (saved.autoName) {
           terminalStore.setAutoName(session.id, saved.autoName);
+        }
+        // The drawer's width is baked into the restored node.width above, so
+        // the flag has to come back with it or the node keeps a blank gutter.
+        if (saved.fileDrawerOpen) {
+          terminalStore.updateSession(session.id, { fileDrawerOpen: true });
+        }
+        if (saved.fileRootPinned && saved.fileRoot) {
+          terminalStore.updateSession(session.id, {
+            fileRoot: saved.fileRoot,
+            fileRootPinned: true,
+          });
+          await window.api.terminal.setFileRoot(session.id, saved.fileRoot);
+        }
+        if (saved.openFiles?.length) {
+          await useFileStore().restoreTabs(
+            session.id,
+            saved.openFiles,
+            saved.activeFile ?? null
+          );
         }
       } catch (err) {
         console.error("[Workspace] Failed to restore terminal", saved.id, err);
@@ -633,6 +661,83 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     currentWorkspace.value.updatedAt = Date.now();
   }
 
+  // ─── File Nodes (files detached onto the canvas) ─────────────────
+
+  /**
+   * Pin a file to the canvas as its own node. Re-pinning a path that's already
+   * on the canvas returns the existing node instead of stacking duplicates.
+   */
+  function createFileNode(options: Partial<FileNode> & { path: string }): FileNode | null {
+    if (!currentWorkspace.value) return null;
+
+    const existing = currentWorkspace.value.files.find((f) => f.path === options.path);
+    if (existing) return existing;
+
+    const node: FileNode = {
+      id: generateId("file"),
+      path: options.path,
+      x: options.x ?? 100,
+      y: options.y ?? 100,
+      width: options.width ?? 520,
+      height: options.height ?? 460,
+      groupId: options.groupId ?? null,
+      pinnedToTerminalId: options.pinnedToTerminalId ?? null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    currentWorkspace.value.files.push(node);
+    currentWorkspace.value.updatedAt = Date.now();
+
+    const uiStore = useUIStore();
+    uiStore.revealNewItem({
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+      id: node.id,
+    });
+    return node;
+  }
+
+  function updateFileNode(id: string, patch: Partial<FileNode>): void {
+    if (!currentWorkspace.value) return;
+    const node = currentWorkspace.value.files.find((f) => f.id === id);
+    if (!node) return;
+    Object.assign(node, patch);
+    node.updatedAt = Date.now();
+    currentWorkspace.value.updatedAt = Date.now();
+  }
+
+  function removeFileNode(id: string): void {
+    if (!currentWorkspace.value) return;
+    currentWorkspace.value.files = currentWorkspace.value.files.filter((f) => f.id !== id);
+    currentWorkspace.value.updatedAt = Date.now();
+  }
+
+  /**
+   * Detach a file node from a terminal that's going away. The node stays on the
+   * canvas -- the file is still on disk and still worth reading -- it just stops
+   * travelling with a terminal that no longer exists.
+   */
+  function unpinFilesForTerminal(terminalId: string): void {
+    if (!currentWorkspace.value) return;
+    for (const node of currentWorkspace.value.files) {
+      if (node.pinnedToTerminalId === terminalId) {
+        node.pinnedToTerminalId = null;
+        node.updatedAt = Date.now();
+      }
+    }
+    currentWorkspace.value.updatedAt = Date.now();
+  }
+
+  function setFileSelected(ids: string[]): void {
+    selectedFileIds.value = new Set(ids);
+  }
+
+  function clearFileSelection(): void {
+    selectedFileIds.value.clear();
+  }
+
   // ─── Settings ────────────────────────────────────────────────────
 
   // ─── Selection ───────────────────────────────────────────────────
@@ -702,6 +807,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     lastSavedAt,
     selectedNoteIds,
     selectedGroupIds,
+    selectedFileIds,
     fitViewTargetId,
     // Getters
     viewport,
@@ -712,6 +818,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     groupCount,
     edges,
     stickyNotes,
+    fileNodes,
     // Actions
     createNewWorkspace,
     saveCurrentWorkspace,
@@ -737,6 +844,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     updateStickyNote,
     removeStickyNote,
     unpinNotesForTerminal,
+    createFileNode,
+    updateFileNode,
+    removeFileNode,
+    unpinFilesForTerminal,
+    setFileSelected,
+    clearFileSelection,
     setNoteSelected,
     toggleNoteSelected,
     clearNoteSelection,

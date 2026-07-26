@@ -16,6 +16,8 @@ import { ChevronLeft, ChevronRight, LayoutGrid, ArrowRight } from "lucide-vue-ne
 import TerminalNode from "./TerminalNode.vue";
 import GroupNode from "./GroupNode.vue";
 import StickyNoteNode from "./StickyNoteNode.vue";
+import FileCanvasNode from "./FileCanvasNode.vue";
+import { useFileStore } from "@renderer/store/file";
 
 const terminalStore = useTerminalStore();
 const workspaceStore = useWorkspaceStore();
@@ -96,6 +98,7 @@ const minimapNodeColor = computed(() => {
     if (node.id === highlight) return MINIMAP_HIGHLIGHT;
     if (node.type === "group") return "rgba(78, 204, 163, 0.35)";
     if (node.type === "note") return light ? "#f0d878" : "#7a6a2a";
+    if (node.type === "file") return light ? "#5f9ed6" : "#64b5f6";
     // Terminal nodes get a bright, high-contrast fill so they read clearly
     // against the minimap's own background at a glance.
     return light ? "#8a7fc2" : "#e94560";
@@ -166,6 +169,7 @@ const {
   zoomTo,
   setCenter,
   getViewport,
+  screenToFlowCoordinate,
 } = useVueFlow("canvas");
 
 // Register custom node types
@@ -173,6 +177,7 @@ const nodeTypes: Record<string, any> = {
   terminal: markRaw(TerminalNode),
   group: markRaw(GroupNode),
   note: markRaw(StickyNoteNode),
+  file: markRaw(FileCanvasNode),
 };
 
 // --- Node Conversion ----------------------------------------------
@@ -243,10 +248,25 @@ const stickyNoteNodes = computed<Node[]>(() =>
   }))
 );
 
+const fileCanvasNodes = computed<Node[]>(() =>
+  workspaceStore.fileNodes.map((file) => ({
+    id: file.id,
+    type: "file",
+    position: { x: file.x, y: file.y },
+    width: file.width,
+    height: file.height,
+    data: { file },
+    selectable: true,
+    draggable: true,
+    resizable: true,
+  }))
+);
+
 const allNodes = computed<Node[]>(() => [
   ...groupNodes.value,      // groups rendered behind terminals
   ...terminalNodes.value,
   ...stickyNoteNodes.value,
+  ...fileCanvasNodes.value,
 ]);
 
 // --- Node Change Handlers -----------------------------------------
@@ -280,6 +300,13 @@ function handleNodesChange(changes: NodeChange[]): void {
           height: dimChange.dimensions.height,
         });
       }
+      const fileNode = workspaceStore.fileNodes.find((f) => f.id === change.id);
+      if (fileNode && dimChange.dimensions) {
+        workspaceStore.updateFileNode(change.id, {
+          width: dimChange.dimensions.width,
+          height: dimChange.dimensions.height,
+        });
+      }
     } else if (change.type === "select") {
       const selectChange = change as NodeSelectionChange;
       if (terminalStore.sessions.has(selectChange.id)) {
@@ -306,6 +333,14 @@ function handleNodesChange(changes: NodeChange[]): void {
           newSet.delete(selectChange.id);
         }
         workspaceStore.selectedGroupIds = newSet;
+      } else if (workspaceStore.fileNodes.find((f) => f.id === selectChange.id)) {
+        const newSet = new Set(workspaceStore.selectedFileIds);
+        if (selectChange.selected) {
+          newSet.add(selectChange.id);
+        } else {
+          newSet.delete(selectChange.id);
+        }
+        workspaceStore.selectedFileIds = newSet;
       }
     }
   }
@@ -507,6 +542,7 @@ function handleNodeDragStop({ node }: { node: Node }): void {
           });
         }
       }
+      movePinnedFiles(node.id, dx, dy);
     }
     resetGroupDrag();
   } else if (node.type === "group") {
@@ -520,6 +556,23 @@ function handleNodeDragStop({ node }: { node: Node }): void {
       y: node.position.y,
     });
     syncNoteGroupMembershipAfterDrag(node.id, node);
+  } else if (node.type === "file") {
+    workspaceStore.updateFileNode(node.id, {
+      x: node.position.x,
+      y: node.position.y,
+    });
+  }
+}
+
+/**
+ * Files pinned to a terminal travel with it, exactly like pinned sticky notes --
+ * the point of pinning is that the file stays next to the session editing it.
+ */
+function movePinnedFiles(terminalId: string, dx: number, dy: number): void {
+  for (const file of workspaceStore.fileNodes) {
+    if (file.pinnedToTerminalId === terminalId) {
+      workspaceStore.updateFileNode(file.id, { x: file.x + dx, y: file.y + dy });
+    }
   }
 }
 
@@ -585,6 +638,11 @@ onSelectionDragStop(({ nodes }) => {
         x: node.position.x,
         y: node.position.y,
       });
+    } else if (node.type === "file") {
+      workspaceStore.updateFileNode(node.id, {
+        x: node.position.x,
+        y: node.position.y,
+      });
     }
   }
   for (const { id, dx, dy } of movedTerminals) {
@@ -597,6 +655,7 @@ onSelectionDragStop(({ nodes }) => {
         });
       }
     }
+    movePinnedFiles(id, dx, dy);
   }
 });
 
@@ -658,7 +717,12 @@ function handleKeyDown(e: KeyboardEvent): void {
     const selectedTerminals = Array.from(terminalStore.selectedTerminalIds);
     const selectedNotes = Array.from(workspaceStore.selectedNoteIds);
     const selectedGroups = Array.from(workspaceStore.selectedGroupIds);
-    const total = selectedTerminals.length + selectedNotes.length + selectedGroups.length;
+    const selectedFiles = Array.from(workspaceStore.selectedFileIds);
+    const total =
+      selectedTerminals.length +
+      selectedNotes.length +
+      selectedGroups.length +
+      selectedFiles.length;
     if (total === 0) return;
 
     for (const id of selectedTerminals) {
@@ -666,6 +730,10 @@ function handleKeyDown(e: KeyboardEvent): void {
       terminalStore.removeSession(id);
       workspaceStore.removeEdgesForTerminal(id);
       workspaceStore.unpinNotesForTerminal(id);
+      // The file stays on the canvas -- it's still a real file worth reading --
+      // it just stops travelling with a terminal that no longer exists.
+      workspaceStore.unpinFilesForTerminal(id);
+      fileStore.clearForTerminal(id);
     }
     terminalStore.clearSelection();
 
@@ -673,6 +741,13 @@ function handleKeyDown(e: KeyboardEvent): void {
       workspaceStore.removeStickyNote(id);
     }
     workspaceStore.clearNoteSelection();
+
+    // Closing a file node only removes it from the canvas; nothing is deleted
+    // from disk, which is why this needs no confirmation.
+    for (const id of selectedFiles) {
+      workspaceStore.removeFileNode(id);
+    }
+    workspaceStore.clearFileSelection();
 
     // Ungroup (not destructive to the terminals inside) rather than kill them.
     for (const id of selectedGroups) {
@@ -912,6 +987,48 @@ watch(
   }
 );
 
+// --- Detaching a file tab onto the canvas -------------------------
+
+const fileStore = useFileStore();
+
+/**
+ * A file tab dragged out of a terminal and dropped on empty canvas becomes its
+ * own node at the drop point, pinned to the terminal it came from so it travels
+ * with that session.
+ */
+function handleCanvasDrop(event: DragEvent): void {
+  const path = event.dataTransfer?.getData("application/x-cate-file");
+  if (!path) return;
+  event.preventDefault();
+
+  // Dropping onto an existing node means "put it there", not "detach it here" --
+  // let that node's own handler deal with it instead of stacking a file on top.
+  const overNode = (event.target as HTMLElement | null)?.closest(".vue-flow__node");
+  if (overNode) return;
+
+  const sourceTerminalId = event.dataTransfer?.getData("application/x-cate-file-terminal") || null;
+  const position = screenToFlowCoordinate({ x: event.clientX, y: event.clientY });
+
+  const created = workspaceStore.createFileNode({
+    path,
+    x: position.x,
+    y: position.y,
+    pinnedToTerminalId: sourceTerminalId,
+  });
+  if (!created) return;
+
+  // The canvas node takes its own reference to the buffer, so closing the tab
+  // it came from doesn't tear the file down underneath it.
+  void fileStore.open(path);
+  if (sourceTerminalId) fileStore.closeInTerminal(sourceTerminalId, path);
+}
+
+function handleCanvasDragOver(event: DragEvent): void {
+  if (!event.dataTransfer?.types.includes("application/x-cate-file")) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+}
+
 onMounted(() => {
   window.addEventListener("keydown", handleKeyDown);
   window.addEventListener("keydown", onPanKeyDown);
@@ -927,7 +1044,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div ref="rootEl" class="workspace-canvas-root">
+  <div
+    ref="rootEl"
+    class="workspace-canvas-root"
+    @dragover="handleCanvasDragOver"
+    @drop="handleCanvasDrop"
+  >
   <VueFlow
     id="canvas"
     class="workspace-canvas"

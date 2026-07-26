@@ -178,6 +178,11 @@ function openFile(path: string): void {
   terminalStore.setFocused(props.id);
 }
 
+/** Tag a file dragged out of the tree with this terminal, so a canvas drop pins it here. */
+function tagFileDrag({ event }: { path: string; event: DragEvent }): void {
+  event.dataTransfer?.setData("application/x-cate-file-terminal", props.id);
+}
+
 function changeFileRoot(dir: string): void {
   terminalStore.updateSession(props.id, { fileRoot: dir, fileRootPinned: true });
   void window.api.terminal.setFileRoot(props.id, dir);
@@ -307,6 +312,7 @@ watch(
           @open="openFile"
           @close="toggleDrawer"
           @root-change="changeFileRoot"
+          @drag-file="tagFileDrag"
         />
         <div class="drawer-resize-handle" @mousedown.stop="startDrawerResize" />
       </template>

@@ -44,7 +44,10 @@ async function close(path: string): Promise<void> {
 
 function handleDragStart(event: DragEvent, path: string, index: number): void {
   dragIndex.value = index;
+  // Two payloads: the path, plus which terminal it came from so a drop on the
+  // canvas can pin the detached node to this session.
   event.dataTransfer?.setData("application/x-cate-file", path);
+  event.dataTransfer?.setData("application/x-cate-file-terminal", props.terminalId);
   event.dataTransfer?.setData("text/plain", path);
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "copyMove";
 }

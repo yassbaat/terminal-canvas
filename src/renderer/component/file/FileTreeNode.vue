@@ -57,6 +57,11 @@ async function refresh(): Promise<void> {
 
 function handleDragStart(event: DragEvent): void {
   if (props.entry.isDirectory) return;
+  event.dataTransfer?.setData("application/x-cate-file", props.entry.path);
+  event.dataTransfer?.setData("text/plain", props.entry.path);
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = "copyMove";
+  // The drawer's owner tags the event with its terminal id -- a file dragged
+  // straight from the tree can be pinned to that session just like a tab can.
   emit("drag-file", { path: props.entry.path, event });
 }
 

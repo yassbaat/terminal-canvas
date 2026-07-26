@@ -71,6 +71,7 @@ export function saveWorkspace(workspace: Workspace): void {
     groups: workspace.groups,
     edges: workspace.edges || [],
     stickyNotes: workspace.stickyNotes || [],
+    files: workspace.files || [],
     promptHistory: workspace.promptHistory,
     settings: workspace.settings ?? { ...DEFAULT_SETTINGS },
   };
@@ -115,6 +116,8 @@ export function loadWorkspace(workspaceId: string): Workspace | null {
       groups: parsed.groups || [],
       edges: parsed.edges || [],
       stickyNotes: parsed.stickyNotes || [],
+      // Absent in v1 files -- canvas file nodes didn't exist yet.
+      files: parsed.files || [],
       promptHistory: parsed.promptHistory || [],
       settings: parsed.settings || { ...DEFAULT_SETTINGS },
     };
@@ -231,6 +234,7 @@ export function createDefaultWorkspace(): Workspace {
     groups: [],
     edges: [],
     stickyNotes: [],
+    files: [],
     promptHistory: [],
     settings: { ...DEFAULT_SETTINGS },
   };

@@ -37,8 +37,35 @@ export interface Workspace {
   groups: Group[];
   edges: WorkspaceEdge[];
   stickyNotes: StickyNote[];
+  /** Files detached from a terminal's tab strip onto the canvas as their own nodes. */
+  files: FileNode[];
   promptHistory: PromptEntry[];
   settings: WorkspaceSettings;
+}
+
+/**
+ * A file pinned to the canvas as a standalone node -- dragged out of a
+ * terminal's tab strip so it can sit beside the session that's editing it.
+ *
+ * Only the path and geometry are persisted, never the contents: the file on
+ * disk is the source of truth, and a workspace that carried a stale copy of it
+ * would be actively misleading next to an agent that has since rewritten it.
+ */
+export interface FileNode {
+  id: string;
+  path: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  groupId?: string | null;
+  /**
+   * Terminal this file was dragged out of. A pinned file travels with that
+   * terminal when it's dragged, and is unpinned (but kept) if it's closed.
+   */
+  pinnedToTerminalId?: string | null;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface StickyNote {
