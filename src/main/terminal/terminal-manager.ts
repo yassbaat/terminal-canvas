@@ -345,6 +345,7 @@ export class TerminalManager {
       needsAttention: false,
       lastAttentionAt: null,
       attentionReason: null,
+      oscTitle: null,
       idleDetectionEnabled: true,
       activeAgent: null,
     };
@@ -382,6 +383,9 @@ export class TerminalManager {
       // when the prompt never prints the full path).
       this.detectCwdChange(data, session);
       this.scheduleCwdProbe(id);
+
+      // Whatever the running program calls itself right now (OSC 0/1/2).
+      this.detectTitleChange(data, id);
 
       // First shell prompt seen -- safe to inject an auto-run command now
       // (rc files have finished loading). See checkPromptReady.
@@ -944,6 +948,43 @@ export class TerminalManager {
     if (!detected) return;
     // The terminal may have been torn down while lsof was running.
     this.applyCwdChange(id, detected);
+  }
+
+  /**
+   * Capture the window title programs set with OSC 0 (icon + title), 1 (icon)
+   * or 2 (title): `ESC ] <n> ; <text> BEL` (or terminated by ST, `ESC \`).
+   *
+   * This is how a real terminal emulator learns what to put in its tab, and
+   * it's free, accurate naming: coding agents retitle continuously with what
+   * they're currently doing. Shells set it too, and theirs is noise -- that
+   * filtering happens renderer-side in util/sessionName.ts, which is also where
+   * we know whether an agent is running (activeAgent is renderer state).
+   *
+   * Note this only *reads* the sequence; the raw data still went to the
+   * renderer untouched above, so xterm sees it as well.
+   */
+  private detectTitleChange(data: string, id: string): void {
+    if (!data.includes("\x1b]")) return;
+
+    const pattern = /\x1b\]([012]);([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+    let title: string | null = null;
+    let match: RegExpExecArray | null;
+    // Last one wins -- a single chunk can carry several retitles.
+    while ((match = pattern.exec(data)) !== null) {
+      title = match[2];
+    }
+    if (title === null) return;
+
+    const active = this.terminals.get(id);
+    if (!active) return;
+
+    const trimmed = title.trim();
+    if (active.session.oscTitle === trimmed) return;
+    active.session.oscTitle = trimmed || null;
+
+    if (this.ipcWindow && !this.ipcWindow.isDestroyed()) {
+      this.ipcWindow.webContents.send("terminal:title", { terminalId: id, title: trimmed });
+    }
   }
 
   /**

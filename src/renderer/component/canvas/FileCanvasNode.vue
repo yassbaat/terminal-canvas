@@ -8,6 +8,7 @@ import { useFileStore } from "@renderer/store/file";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { getBasename, getRelativePath } from "@renderer/util/path";
+import { sessionDisplayName } from "@renderer/util/sessionName";
 import CodeView from "@renderer/component/file/CodeView.vue";
 
 /**
@@ -44,7 +45,7 @@ const pinnedName = computed(() => {
   const terminalId = props.data.file.pinnedToTerminalId;
   if (!terminalId) return null;
   const session = terminalStore.getSession(terminalId);
-  return session ? session.manualName || session.autoName || session.name : null;
+  return session ? sessionDisplayName(session) : null;
 });
 
 function togglePin(): void {

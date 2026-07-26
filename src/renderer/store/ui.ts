@@ -4,7 +4,6 @@ import { ref, computed, onScopeDispose } from "vue";
 export type InspectorTab = "terminal" | "prompt" | "settings";
 export type SidebarTab = "layers" | "workspaces";
 export type ThemePreference = "light" | "dark" | "system";
-export type TerminalHeaderStyle = "comfortable" | "compact" | "minimal";
 /** What happens on the canvas when a new terminal/note is added. */
 export type NewItemPlacement = "focus" | "arrow";
 
@@ -32,7 +31,7 @@ const DEFAULT_IDLE_THRESHOLD_SECONDS = 2;
 const OUTLINE_HEIGHT_KEY = "terminal-canvas:outline-height";
 const INSPECTOR_WIDTH_KEY = "terminal-canvas:inspector-width";
 const MEMORY_RAIL_WIDTH_KEY = "terminal-canvas:memory-rail-width";
-const HEADER_STYLE_KEY = "terminal-canvas:terminal-header-style";
+const TERMINAL_TITLE_SIZE_KEY = "terminal-canvas:terminal-title-size";
 const NEW_ITEM_PLACEMENT_KEY = "terminal-canvas:new-item-placement";
 const SHOW_SHELL_TYPE_KEY = "terminal-canvas:show-shell-type";
 const FILE_DRAWER_WIDTH_KEY = "terminal-canvas:file-drawer-width";
@@ -97,17 +96,17 @@ export const useUIStore = defineStore("ui", () => {
     return fileDrawerWidth.value - previous;
   }
 
-  // ─── Terminal Header Style ───────────────────────────────────────
-  const storedHeaderStyle = localStorage.getItem(HEADER_STYLE_KEY);
-  const headerStyle = ref<TerminalHeaderStyle>(
-    storedHeaderStyle === "comfortable" || storedHeaderStyle === "compact" || storedHeaderStyle === "minimal"
-      ? storedHeaderStyle
-      : "comfortable"
-  );
+  // ─── Terminal title size ─────────────────────────────────────────
+  // Replaced the old three-way header-style setting. The variants differed by
+  // how much they stacked below the name (cwd line, duplicate agent pill) --
+  // information the name and the agent glyph already carry, at the cost of
+  // making every node taller. One header now, and the thing that genuinely
+  // varies by taste and display is adjustable instead.
+  const terminalTitleSize = ref(readStoredWidth(TERMINAL_TITLE_SIZE_KEY, 13));
 
-  function setHeaderStyle(style: TerminalHeaderStyle): void {
-    headerStyle.value = style;
-    localStorage.setItem(HEADER_STYLE_KEY, style);
+  function setTerminalTitleSize(px: number): void {
+    terminalTitleSize.value = Math.min(22, Math.max(10, Math.round(px)));
+    localStorage.setItem(TERMINAL_TITLE_SIZE_KEY, String(terminalTitleSize.value));
   }
 
   // ─── Show shell type (zsh, bash, PowerShell…) ────────────────────
@@ -501,7 +500,7 @@ export const useUIStore = defineStore("ui", () => {
     inspectorWidth,
     memoryRailWidth,
     fileDrawerWidth,
-    headerStyle,
+    terminalTitleSize,
     showShellType,
     newItemPlacement,
     revealTarget,
@@ -540,7 +539,7 @@ export const useUIStore = defineStore("ui", () => {
     setInspectorWidth,
     setMemoryRailWidth,
     setFileDrawerWidth,
-    setHeaderStyle,
+    setTerminalTitleSize,
     setShowShellType,
     setNewItemPlacement,
     revealNewItem,

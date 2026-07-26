@@ -6,6 +6,7 @@ import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useUIStore } from "@renderer/store/ui";
 import FocusTile from "./FocusTile.vue";
 import PromptRail from "@renderer/component/terminal/PromptRail.vue";
+import { sessionDisplayName } from "@renderer/util/sessionName";
 import {
   X,
   Plus,
@@ -176,7 +177,7 @@ const dropTargetId = ref<string | null>(null);
 const ghostPos = ref({ x: 0, y: 0 });
 const ghostName = computed(() => {
   const s = draggingId.value ? terminalStore.sessions.get(draggingId.value) : null;
-  return s ? s.manualName || s.autoName || s.name : "";
+  return s ? sessionDisplayName(s) : "";
 });
 
 let dragPending: { id: string; startX: number; startY: number } | null = null;
@@ -414,7 +415,7 @@ onUnmounted(() => {
       <div v-if="offStageAlert" class="focus-alert">
         <Bell :size="14" class="focus-alert-icon" />
         <span class="focus-alert-text">
-          <strong>{{ offStageAlert.manualName || offStageAlert.autoName || offStageAlert.name }}</strong>
+          <strong>{{ sessionDisplayName(offStageAlert) }}</strong>
           {{ offStageAlert.attentionReason === 'input' ? 'needs your input' : 'needs attention' }}
         </span>
         <button class="focus-alert-btn" @click="bringInAlert">Bring it in</button>

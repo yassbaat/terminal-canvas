@@ -82,6 +82,12 @@ export interface TerminalSession {
   idleDetectionEnabled: boolean;
   /** Best-effort guess at which coding-agent CLI is running in the foreground, if any. */
   activeAgent: KnownAgentId | null;
+  /**
+   * The window title the running program last set via OSC 0/1/2. Coding agents
+   * retitle continuously with what they're working on; see
+   * util/sessionName.ts for when it's trusted over our own naming.
+   */
+  oscTitle: string | null;
 }
 
 export interface ShellInfo {
@@ -150,6 +156,11 @@ export interface TerminalAttentionEvent {
 
 export interface TerminalReadyEvent {
   terminalId: string;
+}
+
+export interface TerminalTitleEvent {
+  terminalId: string;
+  title: string;
 }
 
 export interface TerminalNodeProps {

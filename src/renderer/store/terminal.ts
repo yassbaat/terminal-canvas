@@ -429,14 +429,25 @@ export const useTerminalStore = defineStore("terminal", () => {
     });
 
     // Current working directory changed
-    window.api.terminal.onCwdChanged(({ terminalId, cwd }) => {
+    window.api.terminal.onCwdChanged(({ terminalId, cwd, repoRoot, fileRoot }) => {
       const s = sessions.value.get(terminalId);
       if (s) {
         s.cwd = cwd;
         s.projectName = cwd.split(/[\\/]/).pop() || null;
         s.cwdLabel = cwd.length > 40 ? "..." + cwd.slice(-37) : cwd;
+        s.repoRoot = repoRoot ?? null;
+        // The pinned case is authoritative on this side -- main only recomputes
+        // fileRoot when it isn't pinned, and echoes the pinned value back.
+        if (!s.fileRootPinned && fileRoot) s.fileRoot = fileRoot;
         s.updatedAt = Date.now();
       }
+    });
+
+    // The running program retitled itself (OSC 0/1/2). Stored raw; whether it
+    // becomes the visible name is decided in util/sessionName.ts.
+    window.api.terminal.onTitle(({ terminalId, title }) => {
+      const s = sessions.value.get(terminalId);
+      if (s) s.oscTitle = title || null;
     });
 
     // Prompt captured from terminal input

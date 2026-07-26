@@ -16,6 +16,7 @@ import type {
   TerminalRenamedEvent,
   TerminalAttentionEvent,
   TerminalReadyEvent,
+  TerminalTitleEvent,
 } from "@renderer/type/terminal";
 import type { PromptEntry } from "@renderer/type/prompt";
 
@@ -68,6 +69,12 @@ const terminal: TerminalAPI = {
     const handler = (_: unknown, data: TerminalReadyEvent) => callback(data);
     ipcRenderer.on("terminal:ready", handler);
     return () => ipcRenderer.removeListener("terminal:ready", handler);
+  },
+
+  onTitle: (callback: (event: TerminalTitleEvent) => void) => {
+    const handler = (_: unknown, data: TerminalTitleEvent) => callback(data);
+    ipcRenderer.on("terminal:title", handler);
+    return () => ipcRenderer.removeListener("terminal:title", handler);
   },
 };
 

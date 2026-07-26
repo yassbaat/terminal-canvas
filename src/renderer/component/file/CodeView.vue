@@ -62,6 +62,7 @@ const HYDRATE_ZOOM = 0.6;
 const host = ref<HTMLDivElement | null>(null);
 const view = shallowRef<EditorView | null>(null);
 const languageCompartment = new Compartment();
+const interactionCompartment = new Compartment();
 const saving = ref(false);
 const savedFlash = ref(false);
 
@@ -88,10 +89,27 @@ async function handleSave(force = false): Promise<void> {
   }
 }
 
-function baseExtensions(): Extension[] {
+/**
+ * Everything that only makes sense once the user has actually clicked into this
+ * file. Until then a code node behaves like any other thing on the canvas: no
+ * gutter, no active-line band, no selection-match highlighting -- just the code.
+ * That keeps a wall of unread files from looking like a wall of live editors,
+ * and it's why line numbers appear on click rather than on zoom.
+ */
+function interactionExtensions(): Extension[] {
+  if (!props.active) return [];
   return [
     lineNumbers(),
     foldGutter(),
+    highlightActiveLine(),
+    highlightActiveLineGutter(),
+    highlightSelectionMatches(),
+  ];
+}
+
+function baseExtensions(): Extension[] {
+  return [
+    interactionCompartment.of(interactionExtensions()),
     highlightSpecialChars(),
     history(),
     drawSelection(),
@@ -102,9 +120,6 @@ function baseExtensions(): Extension[] {
     closeBrackets(),
     rectangularSelection(),
     crosshairCursor(),
-    highlightActiveLine(),
-    highlightActiveLineGutter(),
-    highlightSelectionMatches(),
     syntaxHighlighting(cateHighlighter),
     cateEditorTheme,
     EditorView.lineWrapping,
@@ -132,16 +147,18 @@ function baseExtensions(): Extension[] {
       }
     }),
     EditorState.readOnly.of(!!entry.value?.truncated),
-    // The canvas swallows wheel events for panning; inside the editor the wheel
-    // has to scroll the document instead, so stop it before it reaches Vue Flow.
+    // A code node on the canvas is a canvas object first and an editor second.
+    // Until it's clicked, the wheel belongs to the canvas (scroll to pan past a
+    // file, exactly like scrolling past a terminal) and a press belongs to
+    // box-select. Once it's active, both belong to the editor -- otherwise you
+    // couldn't scroll a long file or drag a text selection.
     EditorView.domEventHandlers({
       wheel: (event) => {
-        event.stopPropagation();
+        if (props.active) event.stopPropagation();
         return false;
       },
       mousedown: (event) => {
-        // Keep node-drag from stealing the press that starts a text selection.
-        event.stopPropagation();
+        if (props.active) event.stopPropagation();
         return false;
       },
     }),
@@ -189,6 +206,17 @@ function syncDocFromStore(): void {
   });
   v.scrollDOM.scrollTop = scrollTop;
 }
+
+// Gutters and highlights come and go with focus; reconfigure rather than
+// rebuild, so the document, scroll position and undo history all survive.
+watch(
+  () => props.active,
+  () => {
+    view.value?.dispatch({
+      effects: interactionCompartment.reconfigure(interactionExtensions()),
+    });
+  }
+);
 
 watch(hydrated, async (on) => {
   if (on) {
@@ -277,7 +305,12 @@ defineExpose({ save: handleSave });
 
       <!-- Live editor above the hydration threshold, a cheap static render below
            it. Both are always in the tree so the swap doesn't reflow the node. -->
-      <div v-show="hydrated" ref="host" class="code-host nodrag nowheel" />
+      <div
+        v-show="hydrated"
+        ref="host"
+        class="code-host nodrag"
+        :class="{ 'code-host-active': active, nowheel: active }"
+      />
       <pre v-if="!hydrated" class="code-static">{{ staticLines.join("\n") }}</pre>
 
       <div class="code-status">
@@ -299,12 +332,26 @@ defineExpose({ save: handleSave });
   min-height: 0;
   background: var(--tc-editor-bg);
   overflow: hidden;
+  /* Plain pointer, not the terminal's I-beam: hovering a file you haven't
+     clicked into is browsing the canvas, not typing. The I-beam comes back
+     below once the node is actually active. */
+  cursor: default;
 }
 
 .code-host {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+.code-host :deep(.cm-editor),
+.code-host :deep(.cm-content),
+.code-host :deep(.cm-scroller) {
+  cursor: default;
+}
+
+.code-host-active :deep(.cm-content) {
+  cursor: text;
 }
 
 .code-static {

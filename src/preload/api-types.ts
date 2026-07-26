@@ -8,6 +8,7 @@ import type {
   TerminalRenamedEvent,
   TerminalAttentionEvent,
   TerminalReadyEvent,
+  TerminalTitleEvent,
 } from "@renderer/type/terminal";
 import type { PromptEntry, CreatePromptOptions } from "@renderer/type/prompt";
 import type { Workspace, WorkspaceSummary, SaveWorkspaceOptions } from "@renderer/type/workspace";
@@ -42,6 +43,8 @@ export interface TerminalAPI {
   onRenamed(callback: (event: TerminalRenamedEvent) => void): () => void;
   onAttention(callback: (event: TerminalAttentionEvent) => void): () => void;
   onReady(callback: (event: TerminalReadyEvent) => void): () => void;
+  /** The running program set a new window title (OSC 0/1/2). */
+  onTitle(callback: (event: TerminalTitleEvent) => void): () => void;
 }
 
 export interface PromptAPI {

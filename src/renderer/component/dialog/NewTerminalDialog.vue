@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from "vue";
 import { useTerminalStore } from "@renderer/store/terminal";
-import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useLaunchProfileStore } from "@renderer/store/launchProfile";
 import { useUIStore } from "@renderer/store/ui";
 import { X } from "lucide-vue-next";
@@ -15,14 +14,10 @@ const emit = defineEmits<{
 }>();
 
 const terminalStore = useTerminalStore();
-const workspaceStore = useWorkspaceStore();
 const launchProfileStore = useLaunchProfileStore();
 const uiStore = useUIStore();
 const selectedShellId = ref("");
 const customCwd = ref("");
-const name = ref("");
-const rememberForSession = ref(false);
-const rememberAlways = ref(false);
 const selectedProfileId = ref("plain-shell");
 
 // Auto-select first shell when shells load or dialog opens
@@ -54,13 +49,6 @@ onMounted(() => {
 async function create() {
   if (!selectedShellId.value) return;
 
-  if (rememberForSession.value) {
-    terminalStore.sessionDefaultShellId = selectedShellId.value;
-  }
-  if (rememberAlways.value) {
-    workspaceStore.updateSettings({ defaultShellId: selectedShellId.value });
-  }
-
   const profile = launchProfileStore.getProfile(selectedProfileId.value);
 
   await terminalStore.createSession({
@@ -68,7 +56,6 @@ async function create() {
     cols: 80,
     rows: 24,
     cwd: customCwd.value || undefined,
-    name: name.value || undefined,
     autoRunCommand: profile?.command || undefined,
   });
   close();
@@ -93,9 +80,6 @@ async function browseCwd() {
 function close() {
   emit("update:open", false);
   customCwd.value = "";
-  name.value = "";
-  rememberForSession.value = false;
-  rememberAlways.value = false;
   selectedProfileId.value = "plain-shell";
 }
 
@@ -173,26 +157,6 @@ function onKeydown(event: KeyboardEvent) {
           </div>
         </div>
 
-        <div class="form-group">
-          <label>Name (optional)</label>
-          <input
-            v-model="name"
-            class="tc-input"
-            placeholder="My Terminal"
-            type="text"
-          />
-        </div>
-
-        <div class="form-group checkbox-group">
-          <label class="form-checkbox">
-            <input v-model="rememberForSession" type="checkbox" />
-            <span>Always use this shell for this session</span>
-          </label>
-          <label class="form-checkbox">
-            <input v-model="rememberAlways" type="checkbox" />
-            <span>Always use this shell (save to workspace)</span>
-          </label>
-        </div>
       </div>
 
       <div class="dialog-footer">
@@ -222,8 +186,8 @@ function onKeydown(event: KeyboardEvent) {
   background: var(--tc-bg-card);
   border: 1px solid var(--tc-border-color);
   border-radius: var(--tc-border-radius);
-  min-width: 400px;
-  max-width: 90vw;
+  width: 340px;
+  max-width: 92vw;
   box-shadow: var(--tc-shadow-lg);
 }
 
@@ -231,7 +195,7 @@ function onKeydown(event: KeyboardEvent) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 18px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--tc-border-color);
 }
 
@@ -261,17 +225,17 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 .dialog-body {
-  padding: 18px;
+  padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 .dialog-footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 12px 18px;
+  padding: 10px 14px;
   border-top: 1px solid var(--tc-border-color);
 }
 
@@ -294,7 +258,7 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 .shell-option {
-  padding: 6px 14px;
+  padding: 5px 11px;
   border: 1px solid var(--tc-border-color);
   border-radius: var(--tc-border-radius-sm);
   background: var(--tc-bg-secondary);
@@ -326,7 +290,7 @@ function onKeydown(event: KeyboardEvent) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 5px 10px;
   border: 1px solid var(--tc-border-color);
   border-radius: var(--tc-border-radius-sm);
   background: var(--tc-bg-secondary);
@@ -392,25 +356,5 @@ function onKeydown(event: KeyboardEvent) {
   background: var(--tc-bg-hover);
   color: var(--tc-text-primary);
   border-color: var(--tc-border-focus);
-}
-
-.checkbox-group {
-  gap: 10px;
-  margin-top: 4px;
-}
-
-.form-checkbox {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  font-size: var(--tc-font-size-sm);
-  color: var(--tc-text-primary);
-}
-
-.form-checkbox input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--tc-accent);
 }
 </style>

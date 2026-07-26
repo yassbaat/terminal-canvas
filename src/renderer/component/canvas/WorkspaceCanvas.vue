@@ -11,6 +11,7 @@ import { useUIStore } from "@renderer/store/ui";
 import { usePromptStore } from "@renderer/store/prompt";
 import { useSummaryStore } from "@renderer/store/summary";
 import { AGENT_META } from "@renderer/util/agents";
+import { sessionDisplayName } from "@renderer/util/sessionName";
 import type { TerminalSession } from "@renderer/type/terminal";
 import { ChevronLeft, ChevronRight, LayoutGrid, ArrowRight } from "lucide-vue-next";
 import TerminalNode from "./TerminalNode.vue";
@@ -37,7 +38,7 @@ const hoveredSession = computed(() =>
 
 const hoveredDisplayName = computed(() => {
   const s = hoveredSession.value;
-  return s ? s.manualName || s.autoName || s.name : "";
+  return s ? sessionDisplayName(s) : "";
 });
 
 const hoveredAgentColor = computed(() => {

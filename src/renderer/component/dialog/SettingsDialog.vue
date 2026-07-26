@@ -342,20 +342,23 @@ async function toggleContextMenu() {
             <div class="setting-divider" />
 
             <div class="setting-block">
-              <label class="setting-label">Terminal header style</label>
-              <p class="setting-desc">How much detail each terminal's header bar shows.</p>
-              <div class="segmented">
-                <button
-                  v-for="style in (['comfortable', 'compact', 'minimal'] as const)"
-                  :key="style"
-                  type="button"
-                  class="segmented-btn"
-                  :class="{ active: uiStore.headerStyle === style }"
-                  @click="uiStore.setHeaderStyle(style)"
-                >
-                  {{ style.charAt(0).toUpperCase() + style.slice(1) }}
-                </button>
-              </div>
+              <label class="setting-label">
+                Terminal title size
+                <span class="setting-value">{{ uiStore.terminalTitleSize }}px</span>
+              </label>
+              <p class="setting-desc">
+                How large each terminal's name reads in its header. Everything else
+                in the header scales with it.
+              </p>
+              <input
+                class="setting-range"
+                type="range"
+                min="10"
+                max="22"
+                step="1"
+                :value="uiStore.terminalTitleSize"
+                @input="uiStore.setTerminalTitleSize(Number(($event.target as HTMLInputElement).value))"
+              />
             </div>
 
             <div class="setting-divider" />
@@ -798,6 +801,23 @@ async function toggleContextMenu() {
   font-size: var(--tc-font-size-sm);
   font-weight: 600;
   color: var(--tc-text-primary);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.setting-value {
+  font-family: var(--tc-font-mono);
+  font-size: var(--tc-font-size-xs);
+  font-weight: 500;
+  color: var(--tc-text-muted);
+}
+
+.setting-range {
+  width: 100%;
+  accent-color: var(--tc-accent);
+  cursor: pointer;
 }
 
 .setting-desc {

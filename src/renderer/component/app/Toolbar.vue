@@ -9,7 +9,6 @@ import { playAttentionChime } from "@renderer/util/sound";
 import {
   SquareTerminal,
   Plus,
-  FolderOpen,
   Save,
   Group as GroupIcon,
   StickyNote,
@@ -110,35 +109,6 @@ async function quickNewTerminal() {
   }
 }
 
-async function openFolder() {
-  if (typeof window.api === "undefined") return;
-  const result = await window.api.dialog.showOpenDialog({
-    title: "Open Folder in Terminal Canvas",
-    properties: ["openDirectory"],
-  });
-  if (result.canceled || result.filePaths.length === 0) return;
-
-  const dir = result.filePaths[0];
-  const shellId =
-    terminalStore.sessionDefaultShellId ||
-    workspaceStore.settings.defaultShellId;
-  const shell = terminalStore.shells.find((s) => s.id === shellId);
-
-  if (!shell) {
-    uiStore.showToast("No shell available");
-    return;
-  }
-  await terminalStore.createSession({
-    shellId: shell.id,
-    cols: 80,
-    rows: 24,
-    cwd: dir,
-    viewport: workspaceStore.viewport,
-    groups: workspaceStore.groups,
-  });
-  uiStore.showToast(`Opened folder: ${dir}`);
-}
-
 async function saveWorkspace() {
   const ok = await workspaceStore.saveCurrentWorkspace();
   if (ok) uiStore.showToast("Workspace saved");
@@ -212,12 +182,7 @@ function enterFocusMode() {
 
       <button class="toolbar-btn" title="New Terminal (Ctrl+N)" @click="quickNewTerminal">
         <Plus class="toolbar-icon" :size="15" />
-        <span>New</span>
-      </button>
-
-      <button class="toolbar-btn" title="Open Folder" @click="openFolder">
-        <FolderOpen class="toolbar-icon" :size="15" />
-        <span>Open</span>
+        <span>New Terminal</span>
       </button>
 
       <button class="toolbar-btn" title="Save Workspace (Ctrl+S)" @click="saveWorkspace">

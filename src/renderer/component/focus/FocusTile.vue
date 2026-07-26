@@ -109,6 +109,7 @@ function onHeaderPointerDown(e: PointerEvent): void {
     <div class="focus-tile-drag" title="Drag to swap this terminal's position" @pointerdown="onHeaderPointerDown">
       <TerminalHeader
         :session="session"
+        :scale-with-zoom="false"
         @kill="handleKill"
         @restart="handleRestart"
         @clear="handleClear"

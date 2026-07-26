@@ -10,6 +10,7 @@ import { useFileStore } from "@renderer/store/file";
 import { Handle, Position } from "@vue-flow/core";
 import { NodeResizer } from "@vue-flow/node-resizer";
 import { AGENT_META } from "@renderer/util/agents";
+import { sessionDisplayName } from "@renderer/util/sessionName";
 import { useResizeHandle } from "@renderer/composable/useResizeHandle";
 import { Bell } from "lucide-vue-next";
 import TerminalHeader from "@renderer/component/terminal/TerminalHeader.vue";
@@ -47,9 +48,7 @@ const showPromptRail = ref(false);
 const isHovered = ref(false);
 
 // Display name, same precedence as the header.
-const displayName = computed(
-  () => props.data.session.manualName || props.data.session.autoName || props.data.session.name
-);
+const displayName = computed(() => sessionDisplayName(props.data.session));
 
 // Most recently submitted prompt for this terminal (for the zoomed-out
 // hover preview) -- getPromptsForTerminal sorts pinned-first, so re-pick
@@ -331,8 +330,11 @@ watch(
         <TerminalHeader
           :session="data.session"
           :can-focus="true"
+          :can-toggle-files="true"
+          :files-open="drawerOpen"
           @focus="terminalStore.setFocused(id)"
           @focus-solo="focusSolo"
+          @toggle-files="toggleDrawer"
           @kill="handleKill"
           @restart="handleRestart"
           @clear="handleClear"
@@ -387,9 +389,7 @@ watch(
         <TerminalFooter
           :session="data.session"
           :memory-visible="showPromptRail"
-          :files-visible="drawerOpen"
           @toggle-memory="showPromptRail = !showPromptRail"
-          @toggle-files="toggleDrawer"
         />
       </div>
 

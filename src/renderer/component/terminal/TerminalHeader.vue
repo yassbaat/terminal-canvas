@@ -4,15 +4,27 @@ import type { TerminalSession } from "@renderer/type/terminal";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useUIStore } from "@renderer/store/ui";
 import { useWorkspaceStore } from "@renderer/store/workspace";
-import { shortenCwd } from "@renderer/util/path";
 import { AGENT_META } from "@renderer/util/agents";
-import { Bell, BellOff, Pencil, X, FolderOpen, Maximize2 } from "lucide-vue-next";
+import { sessionDisplayName } from "@renderer/util/sessionName";
+import { Bell, BellOff, X, Maximize2, PanelLeft } from "lucide-vue-next";
 
-const props = defineProps<{
-  session: TerminalSession;
-  /** Show the "focus this terminal" button (canvas nodes only, not focus tiles). */
-  canFocus?: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    session: TerminalSession;
+    /** Show the "focus this terminal" button (canvas nodes only, not focus tiles). */
+    canFocus?: boolean;
+    /** Show the file-explorer toggle, and whether the drawer is currently open. */
+    canToggleFiles?: boolean;
+    filesOpen?: boolean;
+    /**
+     * Counter-scale the chrome against the canvas zoom. Off on the Focus stage,
+     * which isn't inside the transformed canvas and would otherwise inherit a
+     * zoom level that means nothing there.
+     */
+    scaleWithZoom?: boolean;
+  }>(),
+  { canFocus: false, canToggleFiles: false, filesOpen: false, scaleWithZoom: true }
+);
 
 const emit = defineEmits<{
   (e: "rename", name: string): void;
@@ -20,15 +32,14 @@ const emit = defineEmits<{
   (e: "restart"): void;
   (e: "clear"): void;
   (e: "focus-solo"): void;
+  (e: "toggle-files"): void;
 }>();
 
 const terminalStore = useTerminalStore();
 const uiStore = useUIStore();
 const workspaceStore = useWorkspaceStore();
 
-const displayName = computed(
-  () => props.session.manualName || props.session.autoName || props.session.name
-);
+const displayName = computed(() => sessionDisplayName(props.session));
 
 const agentMeta = computed(() =>
   props.session.activeAgent ? AGENT_META[props.session.activeAgent] : null
@@ -51,12 +62,22 @@ const statusColor = computed(() => {
   }
 });
 
-const shortCwd = computed(() => shortenCwd(props.session.cwd, 50));
+/**
+ * Chrome grows a little as the canvas zooms out, so the controls stay findable
+ * on a shrunken node -- but only *partly*: a full 1/zoom counter-scale would
+ * make the header balloon to cartoon proportions at 0.3x. Taking 45% of the
+ * correction and capping at 1.5x keeps it subtle, and the header still shrinks
+ * overall, just more slowly than the terminal body.
+ */
+const chromeScale = computed(() => {
+  if (!props.scaleWithZoom) return 1;
+  const zoom = workspaceStore.viewport.zoom || 1;
+  if (zoom >= 1) return 1;
+  return Math.min(1.5, 1 + (1 / zoom - 1) * 0.45);
+});
 
-// `shortCwd` already ends with the project name (it's the last path segment),
-// so it alone is the correct breadcrumb. `repoRoot` is reserved for future
-// repo-aware naming but isn't populated yet, so don't branch on it here.
-const projectLabel = computed(() => shortCwd.value);
+const iconSize = computed(() => Math.round(13 * chromeScale.value));
+const titleSize = computed(() => uiStore.terminalTitleSize * chromeScale.value);
 
 const isRenaming = ref(false);
 const renameValue = ref("");
@@ -72,13 +93,13 @@ function startRename() {
 }
 
 /**
- * Double-clicking the name renames it -- but only when zoomed in enough to be
- * interacting with the terminal for real. When zoomed out, a double-click is
- * claimed by the canvas to zoom/focus this terminal (see WorkspaceCanvas's
- * handleNodeDoubleClick), so don't also pop a rename box no one can see.
+ * Clicking the name renames it -- but only when zoomed in enough to be
+ * interacting with the terminal for real. When zoomed out, a click is about
+ * selecting the node on the canvas, and a rename box no one can read would just
+ * swallow it.
  */
-function onNameDblClick() {
-  if (workspaceStore.viewport.zoom < 0.75) return;
+function onNameClick() {
+  if (props.scaleWithZoom && workspaceStore.viewport.zoom < 0.75) return;
   startRename();
 }
 
@@ -94,17 +115,29 @@ function cancelRename() {
   isRenaming.value = false;
 }
 
-function openCwd() {
-  window.api.terminal.openCwdInExplorer(props.session.id);
-}
-
 function toggleOffDuty() {
   terminalStore.setIdleDetectionEnabled(props.session.id, !props.session.idleDetectionEnabled);
 }
 </script>
 
 <template>
-  <div class="terminal-header" :class="`header-style-${uiStore.headerStyle}`">
+  <div
+    class="terminal-header"
+    :style="{ '--chrome-scale': chromeScale }"
+    :title="session.cwd"
+  >
+    <!-- Files first: it's the one control that opens a whole panel, so it sits
+         apart from the utility icons on the right. -->
+    <button
+      v-if="canToggleFiles"
+      class="header-btn header-btn-files"
+      :class="{ 'header-btn-on': filesOpen }"
+      :title="filesOpen ? 'Hide files' : 'Show files'"
+      @click.stop="emit('toggle-files')"
+    >
+      <PanelLeft :size="iconSize" />
+    </button>
+
     <div class="header-main">
       <div
         class="header-status-dot"
@@ -117,36 +150,29 @@ function toggleOffDuty() {
         :style="{ color: agentMeta.color, borderColor: agentMeta.color }"
         :title="`${agentMeta.label} is running in this terminal`"
       >
-        <component :is="agentMeta.icon" :size="11" />
+        <component :is="agentMeta.icon" :size="Math.round(iconSize * 0.8)" />
       </div>
-      <div class="header-info">
-        <div class="header-name-row">
-          <input
-            v-if="isRenaming"
-            ref="renameInputRef"
-            v-model="renameValue"
-            class="header-name-input"
-            @blur="commitRename"
-            @keydown.enter="commitRename"
-            @keydown.esc="cancelRename"
-          />
-          <span v-else class="header-name" @dblclick="onNameDblClick">
-            {{ displayName }}
-          </span>
-          <span
-            v-if="agentMeta && uiStore.headerStyle !== 'minimal'"
-            class="header-agent-pill"
-            :style="{ color: agentMeta.color, borderColor: agentMeta.color }"
-          >
-            {{ agentMeta.label }}
-          </span>
-          <span v-if="uiStore.headerStyle === 'comfortable' && uiStore.showShellType" class="header-shell-badge">{{ session.shellName }}</span>
-        </div>
-        <div v-if="uiStore.headerStyle !== 'minimal'" class="header-cwd" :title="session.cwd">
-          {{ projectLabel }}
-        </div>
-      </div>
+      <input
+        v-if="isRenaming"
+        ref="renameInputRef"
+        v-model="renameValue"
+        class="header-name-input"
+        :style="{ fontSize: titleSize + 'px' }"
+        @blur="commitRename"
+        @keydown.enter="commitRename"
+        @keydown.esc="cancelRename"
+      />
+      <span
+        v-else
+        class="header-name"
+        :style="{ fontSize: titleSize + 'px' }"
+        title="Click to rename"
+        @click.stop="onNameClick"
+      >
+        {{ displayName }}
+      </span>
     </div>
+
     <div class="header-actions">
       <button
         v-if="canFocus"
@@ -154,15 +180,7 @@ function toggleOffDuty() {
         title="Focus this terminal (open it full-screen)"
         @click.stop="emit('focus-solo')"
       >
-        <Maximize2 class="header-btn-icon" :size="12" />
-      </button>
-      <button
-        v-if="uiStore.headerStyle !== 'minimal'"
-        class="header-btn"
-        title="Open folder in file manager"
-        @click="openCwd"
-      >
-        <FolderOpen class="header-btn-icon" :size="12" />
+        <Maximize2 :size="iconSize" />
       </button>
       <button
         class="header-btn"
@@ -170,80 +188,64 @@ function toggleOffDuty() {
         :title="session.idleDetectionEnabled
           ? 'On duty — will flag when idle or it rings the bell'
           : 'Off duty — idle/bell attention is disabled for this terminal'"
-        @click="toggleOffDuty"
+        @click.stop="toggleOffDuty"
       >
-        <Bell v-if="session.idleDetectionEnabled" class="header-btn-icon" :size="12" />
-        <BellOff v-else class="header-btn-icon" :size="12" />
-      </button>
-      <button class="header-btn" title="Rename" @click="startRename">
-        <Pencil class="header-btn-icon" :size="12" />
+        <Bell v-if="session.idleDetectionEnabled" :size="iconSize" />
+        <BellOff v-else :size="iconSize" />
       </button>
       <button
         class="header-btn header-btn-close"
         title="Close"
-        @click="emit('kill')"
+        @click.stop="emit('kill')"
       >
-        <X class="close-icon" :size="10" />
+        <X :size="Math.round(iconSize * 0.85)" />
       </button>
     </div>
   </div>
 </template>
 
 <style scoped>
+/* One header, deliberately. There used to be three styles behind a setting;
+   the compact/comfortable variants stacked a cwd line and a duplicate agent
+   pill on top of information the name and glyph already carry, which made every
+   node taller for no gain. What's adjustable now is the thing that actually
+   varies by taste and screen: the title size (Settings → Appearance). */
 .terminal-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 5px 10px;
+  gap: calc(4px * var(--chrome-scale, 1));
+  padding: calc(3px * var(--chrome-scale, 1)) calc(6px * var(--chrome-scale, 1));
   background: var(--tc-bg-header);
-  /* A slightly heavier divider than the card border so the header reads as a
-     distinct bar rather than blending into the terminal body -- part of making
-     the header legible across every style variant. */
   border-bottom: 1px solid color-mix(in srgb, var(--tc-border-color) 100%, black 8%);
   flex-shrink: 0;
-  min-height: 36px;
+  min-height: calc(26px * var(--chrome-scale, 1));
   cursor: grab;
 }
 
 .header-main {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(6px * var(--chrome-scale, 1));
   flex: 1;
   min-width: 0;
 }
 
 .header-status-dot {
-  width: 8px;
-  height: 8px;
+  width: calc(6px * var(--chrome-scale, 1));
+  height: calc(6px * var(--chrome-scale, 1));
   border-radius: 50%;
   flex-shrink: 0;
   box-shadow: 0 0 4px currentColor;
 }
 
-.header-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  flex: 1;
-}
-
-.header-name-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
 .header-name {
-  font-size: var(--tc-font-size-sm);
   font-weight: 600;
   color: var(--tc-text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: text;
+  line-height: 1.3;
 }
 
 .header-name:hover {
@@ -252,89 +254,67 @@ function toggleOffDuty() {
 }
 
 .header-name-input {
-  font-size: var(--tc-font-size-sm);
   font-weight: 600;
   background: var(--tc-bg-secondary);
   border: 1px solid var(--tc-accent);
   border-radius: var(--tc-border-radius-sm);
   color: var(--tc-text-primary);
-  padding: 2px 6px;
+  padding: 1px 5px;
   outline: none;
-  width: 150px;
+  min-width: 0;
+  flex: 1;
 }
 
 .header-agent-glyph {
-  width: 18px;
-  height: 18px;
+  width: calc(15px * var(--chrome-scale, 1));
+  height: calc(15px * var(--chrome-scale, 1));
   flex-shrink: 0;
   border: 1px solid;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
   line-height: 1;
   opacity: 0.9;
-}
-
-.header-agent-pill {
-  font-size: var(--tc-font-size-xs);
-  font-weight: 600;
-  border: 1px solid;
-  background: transparent;
-  padding: 1px 6px;
-  border-radius: 4px;
-  white-space: nowrap;
-  flex-shrink: 0;
-  opacity: 0.9;
-}
-
-.header-shell-badge {
-  font-size: var(--tc-font-size-xs);
-  color: var(--tc-text-muted);
-  background: var(--tc-bg-secondary);
-  padding: 1px 6px;
-  border-radius: 4px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.header-cwd {
-  font-size: var(--tc-font-size-xs);
-  color: var(--tc-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-family: var(--tc-font-mono);
-  /* Plain label -- use the folder-icon button in header-actions to open it. */
-  user-select: text;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: calc(1px * var(--chrome-scale, 1));
   flex-shrink: 0;
 }
 
 .header-btn {
-  width: 26px;
-  height: 26px;
+  width: calc(20px * var(--chrome-scale, 1));
+  height: calc(20px * var(--chrome-scale, 1));
   border: none;
   background: transparent;
-  color: var(--tc-text-muted);
+  /* Secondary, not muted: the icons were previously so low-contrast against the
+     header that they effectively disappeared -- especially once the canvas was
+     zoomed out at all. */
+  color: var(--tc-text-secondary);
   cursor: pointer;
   border-radius: var(--tc-border-radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
-  transition: all var(--tc-transition-fast);
+  flex-shrink: 0;
+  transition: background var(--tc-transition-fast), color var(--tc-transition-fast);
 }
 
 .header-btn:hover {
   background: var(--tc-bg-hover);
   color: var(--tc-text-primary);
+}
+
+.header-btn-files {
+  margin-right: calc(2px * var(--chrome-scale, 1));
+}
+
+.header-btn-on {
+  color: var(--tc-accent);
+  background: var(--tc-accent-soft);
 }
 
 /* The focus button is a primary affordance -- tint it toward the accent so it
@@ -354,72 +334,8 @@ function toggleOffDuty() {
   opacity: 0.85;
 }
 
-.header-btn-close {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #ff5f56;
-  color: rgba(77, 0, 0, 0.7);
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 1;
-  padding: 0;
-  opacity: 0.85;
-  transition: opacity 0.15s ease;
-}
-
 .header-btn-close:hover {
-  opacity: 1;
-  background: #ff5f56;
-  color: rgba(77, 0, 0, 0.9);
-}
-
-.close-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-}
-
-/* ─── Header style variants (Settings → General → Terminal Header Style) ─── */
-
-.header-style-compact {
-  padding: 5px 8px;
-  min-height: 32px;
-}
-
-.header-style-compact .header-info {
-  flex-direction: row;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.header-style-compact .header-cwd {
-  font-size: 10px;
-}
-
-.header-style-minimal {
-  padding: 3px 8px;
-  min-height: 24px;
-}
-
-.header-style-minimal .header-name {
-  font-size: 11px;
-}
-
-.header-style-minimal .header-status-dot {
-  width: 6px;
-  height: 6px;
-}
-
-.header-style-minimal .header-agent-glyph {
-  width: 14px;
-  height: 14px;
-}
-
-.header-style-minimal .header-btn {
-  width: 18px;
-  height: 18px;
+  background: var(--tc-accent-soft);
+  color: var(--tc-accent);
 }
 </style>
