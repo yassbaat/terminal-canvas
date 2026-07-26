@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, markRaw, watch, ref, nextTick } from "vue";
-import { VueFlow, useVueFlow, Panel, SelectionMode } from "@vue-flow/core";
+import { VueFlow, useVueFlow, Panel, SelectionMode, ConnectionMode } from "@vue-flow/core";
 import { Background, BackgroundVariant } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 import { MiniMap } from "@vue-flow/minimap";
@@ -162,6 +162,7 @@ const {
   onPaneClick,
   onSelectionDragStop,
   getSelectedNodes,
+  getSelectedEdges,
   getNode,
   addSelectedNodes,
   removeSelectedNodes,
@@ -233,7 +234,40 @@ const groupNodes = computed<Node[]>(() =>
 /**
  * Edges from the workspace store.
  */
-const allEdges = computed(() => (workspaceStore.edges || []) as any);
+/**
+ * Connection colors are derived from what's at each end rather than stored on
+ * the edge, so an edge can't drift out of sync with the nodes it joins. A
+ * terminal-to-terminal link ("these two sessions are related") reads in the
+ * accent; a terminal-to-file link ("this file came out of that session") reads
+ * in the same blue the file nodes use on the minimap, so the pairing is legible
+ * at a glance without a legend.
+ */
+const TERMINAL_LINK_COLOR = "#e94560";
+const FILE_LINK_COLOR = "#64b5f6";
+
+function edgeColor(source: string, target: string): string {
+  const fileIds = new Set(workspaceStore.fileNodes.map((f) => f.id));
+  const touchesFile = fileIds.has(source) || fileIds.has(target);
+  return touchesFile ? FILE_LINK_COLOR : TERMINAL_LINK_COLOR;
+}
+
+const allEdges = computed(() =>
+  (workspaceStore.edges || []).map((edge) => {
+    const color = edgeColor(edge.source, edge.target);
+    return {
+      ...edge,
+      // Bezier: it curves away from the handle before heading for the target,
+      // which stays readable when two nodes overlap or sit at odd angles.
+      type: "default",
+      animated: false,
+      style: { stroke: color, strokeWidth: 2 },
+      // Selection has to be visible for "click the link, press Delete" to be a
+      // discoverable way to break one.
+      selectable: true,
+      data: { color },
+    };
+  })
+);
 
 const stickyNoteNodes = computed<Node[]>(() =>
   (workspaceStore.stickyNotes || []).map((note) => ({
@@ -459,26 +493,79 @@ let groupDragId: string | null = null;
 let groupDragSiblings: string[] = [];
 let groupDragNotes: string[] = [];
 let groupDragLast: { x: number; y: number } | null = null;
+/** Nodes linked to the dragged one by an edge; they travel with it. */
+let linkedDragIds: string[] = [];
 
 function resetGroupDrag(): void {
   groupDragId = null;
   groupDragSiblings = [];
   groupDragNotes = [];
   groupDragLast = null;
+  linkedDragIds = [];
+}
+
+/**
+ * Every node reachable from `startId` by following edges, excluding itself.
+ *
+ * Connections are meant to read as "these belong together", so dragging one end
+ * brings the whole connected cluster along -- a terminal and the files pulled
+ * out of it stay side by side instead of drifting apart. Breaking the edge
+ * (select it and press Delete) is how you opt out.
+ */
+function collectLinkedNodes(startId: string): string[] {
+  const edges = workspaceStore.edges;
+  if (edges.length === 0) return [];
+
+  const seen = new Set<string>([startId]);
+  const queue = [startId];
+  const found: string[] = [];
+
+  while (queue.length > 0) {
+    const current = queue.shift() as string;
+    for (const edge of edges) {
+      const neighbour =
+        edge.source === current ? edge.target : edge.target === current ? edge.source : null;
+      if (!neighbour || seen.has(neighbour)) continue;
+      seen.add(neighbour);
+      found.push(neighbour);
+      queue.push(neighbour);
+    }
+  }
+  return found;
+}
+
+/** Apply a delta to a node of any type, reading its latest stored position. */
+function nudgeNode(id: string, dx: number, dy: number): void {
+  const session = terminalStore.sessions.get(id);
+  if (session) {
+    terminalStore.updateNode(id, { x: session.node.x + dx, y: session.node.y + dy });
+    return;
+  }
+  const file = workspaceStore.fileNodes.find((f) => f.id === id);
+  if (file) {
+    workspaceStore.updateFileNode(id, { x: file.x + dx, y: file.y + dy });
+    return;
+  }
+  const note = workspaceStore.stickyNotes.find((n) => n.id === id);
+  if (note) {
+    workspaceStore.updateStickyNote(id, { x: note.x + dx, y: note.y + dy });
+  }
 }
 
 function handleNodeDragStart({ node }: { node: Node }): void {
   resetGroupDrag();
-  if (node.type !== "terminal") return;
+
   // A multi-node selection drag is handled by Vue Flow (it moves every
-  // selected node) + onSelectionDragStop -- don't also apply group cohesion
-  // there, or members could be moved twice.
-  if (
-    terminalStore.selectedTerminalIds.size > 1 &&
-    terminalStore.selectedTerminalIds.has(node.id)
-  ) {
-    return;
-  }
+  // selected node) + onSelectionDragStop -- don't also apply cohesion there,
+  // or members could be moved twice.
+  const inMultiDrag =
+    terminalStore.selectedTerminalIds.size > 1 && terminalStore.selectedTerminalIds.has(node.id);
+  if (inMultiDrag) return;
+
+  groupDragLast = { x: node.position.x, y: node.position.y };
+  linkedDragIds = collectLinkedNodes(node.id);
+
+  if (node.type !== "terminal") return;
   const session = terminalStore.sessions.get(node.id);
   if (!session?.groupId) return;
   const group = workspaceStore.groups.find((g) => g.id === session.groupId);
@@ -486,27 +573,28 @@ function handleNodeDragStart({ node }: { node: Node }): void {
   groupDragId = group.id;
   groupDragSiblings = group.terminalIds.filter((id) => id !== node.id);
   groupDragNotes = [...group.noteIds];
-  groupDragLast = { x: node.position.x, y: node.position.y };
+  // A node can be both grouped and linked; move it once, not twice.
+  const alreadyMoving = new Set([...groupDragSiblings, ...groupDragNotes]);
+  linkedDragIds = linkedDragIds.filter((id) => !alreadyMoving.has(id));
 }
 
 function handleNodeDrag({ node }: { node: Node }): void {
-  if (!groupDragId || !groupDragLast || node.type !== "terminal") return;
+  if (!groupDragLast) return;
   const dx = node.position.x - groupDragLast.x;
   const dy = node.position.y - groupDragLast.y;
   if (dx === 0 && dy === 0) return;
   groupDragLast = { x: node.position.x, y: node.position.y };
 
+  // Linked nodes travel with whatever they're connected to.
+  for (const id of linkedDragIds) nudgeNode(id, dx, dy);
+
+  if (!groupDragId) return;
+
   // Move sibling terminals live, reading each one's latest position so the
   // deltas accumulate correctly frame to frame.
-  for (const id of groupDragSiblings) {
-    const s = terminalStore.sessions.get(id);
-    if (s) terminalStore.updateNode(id, { x: s.node.x + dx, y: s.node.y + dy });
-  }
+  for (const id of groupDragSiblings) nudgeNode(id, dx, dy);
   // Move member notes live.
-  for (const id of groupDragNotes) {
-    const n = workspaceStore.stickyNotes.find((nn) => nn.id === id);
-    if (n) workspaceStore.updateStickyNote(id, { x: n.x + dx, y: n.y + dy });
-  }
+  for (const id of groupDragNotes) nudgeNode(id, dx, dy);
   // Move the group frame itself so it stays wrapped around its contents.
   const g = workspaceStore.groups.find((gg) => gg.id === groupDragId);
   if (g) workspaceStore.updateGroup(groupDragId, { x: g.x + dx, y: g.y + dy });
@@ -543,7 +631,6 @@ function handleNodeDragStop({ node }: { node: Node }): void {
           });
         }
       }
-      movePinnedFiles(node.id, dx, dy);
     }
     resetGroupDrag();
   } else if (node.type === "group") {
@@ -566,22 +653,21 @@ function handleNodeDragStop({ node }: { node: Node }): void {
 }
 
 /**
- * Files pinned to a terminal travel with it, exactly like pinned sticky notes --
- * the point of pinning is that the file stays next to the session editing it.
+ * Handle new connections between nodes.
  */
-function movePinnedFiles(terminalId: string, dx: number, dy: number): void {
-  for (const file of workspaceStore.fileNodes) {
-    if (file.pinnedToTerminalId === terminalId) {
-      workspaceStore.updateFileNode(file.id, { x: file.x + dx, y: file.y + dy });
-    }
-  }
+function handleConnect(params: { source: string; target: string }): void {
+  if (params.source === params.target) return;
+  workspaceStore.addEdge({ source: params.source, target: params.target });
 }
 
 /**
- * Handle new connections between terminals.
+ * Double-clicking a connection cuts it. Selecting it and pressing Delete works
+ * too (see handleKeyDown), but that isn't something anyone discovers on a line
+ * they just drew, so the direct gesture exists as well.
  */
-function handleConnect(params: { source: string; target: string }): void {
-  workspaceStore.addEdge({ source: params.source, target: params.target });
+function handleEdgeDoubleClick({ edge }: { edge: { id: string } }): void {
+  workspaceStore.removeEdge(edge.id);
+  uiStore.showToast("Link removed");
 }
 
 /**
@@ -656,7 +742,7 @@ onSelectionDragStop(({ nodes }) => {
         });
       }
     }
-    movePinnedFiles(id, dx, dy);
+    for (const linkedId of collectLinkedNodes(id)) nudgeNode(linkedId, dx, dy);
   }
 });
 
@@ -719,12 +805,21 @@ function handleKeyDown(e: KeyboardEvent): void {
     const selectedNotes = Array.from(workspaceStore.selectedNoteIds);
     const selectedGroups = Array.from(workspaceStore.selectedGroupIds);
     const selectedFiles = Array.from(workspaceStore.selectedFileIds);
+    // Breaking a link is a deletion like any other: click the line, press
+    // Delete. This is how a file stops travelling with the terminal it came out
+    // of without having to close either one.
+    const selectedEdges = getSelectedEdges.value.map((e) => e.id);
     const total =
       selectedTerminals.length +
       selectedNotes.length +
       selectedGroups.length +
-      selectedFiles.length;
+      selectedFiles.length +
+      selectedEdges.length;
     if (total === 0) return;
+
+    for (const id of selectedEdges) {
+      workspaceStore.removeEdge(id);
+    }
 
     for (const id of selectedTerminals) {
       terminalStore.killSession(id);
@@ -1018,6 +1113,13 @@ function handleCanvasDrop(event: DragEvent): void {
   });
   if (!created) return;
 
+  // Draw the link the moment the file lands, so where it came from is visible
+  // rather than something you have to remember. It's an ordinary edge -- select
+  // it and press Delete to cut the file loose.
+  if (sourceTerminalId) {
+    workspaceStore.addEdge({ source: sourceTerminalId, target: created.id });
+  }
+
   // The canvas node takes its own reference to the buffer, so closing the tab
   // it came from doesn't tear the file down underneath it.
   void fileStore.open(path);
@@ -1064,6 +1166,8 @@ onUnmounted(() => {
     :zoom-on-scroll="false"
     :zoom-on-pinch="true"
     :connectable="true"
+    :connection-mode="ConnectionMode.Loose"
+    :connection-radius="45"
     :delete-key-code="null"
     :selection-key-code="selectionKeyCode"
     :multi-selection-key-code="['Control', 'Meta', 'Shift']"
@@ -1076,6 +1180,7 @@ onUnmounted(() => {
     @node-drag-stop="handleNodeDragStop"
     @node-double-click="handleNodeDoubleClick"
     @connect="handleConnect"
+    @edge-double-click="handleEdgeDoubleClick"
     @viewport-change="handleViewportChange"
   >
     <!-- Dotted background grid -->
@@ -1403,5 +1508,60 @@ onUnmounted(() => {
 .canvas-minimap:hover :deep(.vue-flow__minimap) {
   transform: scale(1.7);
   box-shadow: var(--tc-shadow-lg);
+}
+</style>
+
+<!-- Not scoped: handles and edges are rendered by Vue Flow outside this
+     component's style scope. -->
+<style>
+/* Connection handles were 6px dots at 1:1 and effectively ungrabbable once the
+   canvas was zoomed out at all. Bigger, and they fade up on node hover so an
+   idle canvas still reads clean. Paired with :connection-radius, a drop
+   anywhere near the target node snaps to its nearest handle. */
+.vue-flow__handle {
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--tc-bg-card);
+  background: var(--tc-text-muted);
+  opacity: 0;
+  transition: opacity var(--tc-transition-fast), background var(--tc-transition-fast);
+}
+
+.vue-flow__node:hover .vue-flow__handle,
+.vue-flow__node.selected .vue-flow__handle,
+.vue-flow__handle.connecting,
+.vue-flow__handle.valid {
+  opacity: 1;
+}
+
+.vue-flow__handle:hover,
+.vue-flow__handle.connecting {
+  background: var(--tc-accent);
+}
+
+/* The line you're currently dragging, before it lands anywhere. */
+.vue-flow__connection-path {
+  stroke: var(--tc-accent);
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+}
+
+/* Wide invisible stroke under each edge so a 2px line is still easy to click --
+   this is what makes "select the link and press Delete" usable. */
+.vue-flow__edge-interaction {
+  stroke-width: 18;
+}
+
+.vue-flow__edge:hover .vue-flow__edge-path {
+  stroke-width: 3;
+}
+
+.vue-flow__edge.selected .vue-flow__edge-path {
+  stroke-width: 3.5;
+  filter: drop-shadow(0 0 3px currentColor);
+}
+
+.vue-flow__edge {
+  cursor: pointer;
 }
 </style>

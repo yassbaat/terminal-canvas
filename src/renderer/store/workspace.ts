@@ -559,14 +559,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       (e) => e.source === edge.source && e.target === edge.target
     );
     if (!exists) {
+      // Data only -- how a connection looks (color by what it joins, stroke
+      // width, curve) is decided when the edges are handed to Vue Flow, so it
+      // can't go stale against nodes that changed after the edge was drawn.
       currentWorkspace.value.edges.push({
         id: `edge_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         source: edge.source,
         target: edge.target,
         label: edge.label,
-        type: "smoothstep",
-        animated: true,
-        style: { stroke: "var(--tc-accent)", strokeWidth: 2 },
       });
       currentWorkspace.value.updatedAt = Date.now();
     }
@@ -582,12 +582,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   /**
-   * Remove all edges connected to a terminal.
+   * Remove all edges connected to a node -- terminal or file. A connection to
+   * something that no longer exists would render as a line to nowhere.
    */
-  function removeEdgesForTerminal(terminalId: string): void {
+  function removeEdgesForTerminal(nodeId: string): void {
     if (!currentWorkspace.value) return;
     currentWorkspace.value.edges = currentWorkspace.value.edges.filter(
-      (e) => e.source !== terminalId && e.target !== terminalId
+      (e) => e.source !== nodeId && e.target !== nodeId
     );
     currentWorkspace.value.updatedAt = Date.now();
   }
@@ -711,6 +712,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   function removeFileNode(id: string): void {
     if (!currentWorkspace.value) return;
     currentWorkspace.value.files = currentWorkspace.value.files.filter((f) => f.id !== id);
+    removeEdgesForTerminal(id);
     currentWorkspace.value.updatedAt = Date.now();
   }
 
