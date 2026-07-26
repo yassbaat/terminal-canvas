@@ -6,7 +6,9 @@ import type {
   GroqAPI,
   ShellAPI,
   DialogAPI,
+  FileAPI,
 } from "./api-types";
+import type { FileChangedEvent } from "@renderer/type/file";
 import type {
   TerminalDataEvent,
   TerminalExitEvent,
@@ -30,6 +32,9 @@ const terminal: TerminalAPI = {
   setIdleThreshold: (ms) => ipcRenderer.invoke("terminal:setIdleThreshold", { ms }),
   setIdleDetectionEnabled: (terminalId, enabled) =>
     ipcRenderer.invoke("terminal:setIdleDetectionEnabled", { terminalId, enabled }),
+  setFileRoot: (terminalId, dir) => ipcRenderer.invoke("terminal:setFileRoot", { terminalId, dir }),
+  setOpenFiles: (terminalId, openFiles, activeFile) =>
+    ipcRenderer.invoke("terminal:setOpenFiles", { terminalId, openFiles, activeFile }),
 
   onData: (callback: (event: TerminalDataEvent) => void) => {
     const handler = (_: unknown, data: TerminalDataEvent) => callback(data);
@@ -119,6 +124,29 @@ const dialog: DialogAPI = {
   showOpenDialog: (options) => ipcRenderer.invoke("dialog:showOpenDialog", options),
 };
 
+const file: FileAPI = {
+  listDir: (path, showHidden) => ipcRenderer.invoke("file:listDir", { path, showHidden }),
+  read: (path) => ipcRenderer.invoke("file:read", { path }),
+  write: (path, content, expectedMtimeMs) =>
+    ipcRenderer.invoke("file:write", { path, content, expectedMtimeMs }),
+  stat: (path) => ipcRenderer.invoke("file:stat", { path }),
+  watch: (path, kind) => ipcRenderer.invoke("file:watch", { path, kind }),
+  unwatch: (watchId) => ipcRenderer.invoke("file:unwatch", { watchId }),
+  createFile: (path) => ipcRenderer.invoke("file:createFile", { path }),
+  createDirectory: (path) => ipcRenderer.invoke("file:createDirectory", { path }),
+  rename: (from, to) => ipcRenderer.invoke("file:rename", { from, to }),
+  trash: (path) => ipcRenderer.invoke("file:trash", { path }),
+  reveal: (path) => ipcRenderer.invoke("file:reveal", { path }),
+  addRoot: (path) => ipcRenderer.invoke("file:addRoot", { path }),
+  listRoots: () => ipcRenderer.invoke("file:listRoots"),
+  homeDir: () => ipcRenderer.invoke("file:homeDir"),
+  onChanged: (callback: (event: FileChangedEvent) => void) => {
+    const handler = (_: unknown, data: FileChangedEvent) => callback(data);
+    ipcRenderer.on("file:changed", handler);
+    return () => ipcRenderer.removeListener("file:changed", handler);
+  },
+};
+
 export function exposeAPI(): void {
   contextBridge.exposeInMainWorld("api", {
     platform: process.platform,
@@ -128,5 +156,6 @@ export function exposeAPI(): void {
     groq,
     shell,
     dialog,
+    file,
   });
 }

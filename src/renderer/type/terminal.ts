@@ -41,7 +41,19 @@ export interface TerminalSession {
   cwd: string;
   cwdLabel: string;
   projectName: string | null;
+  /** Nearest enclosing git repository, or null when the cwd isn't in one. */
   repoRoot: string | null;
+  /**
+   * Folder the file explorer drawer is rooted at. Defaults to `repoRoot ?? cwd`
+   * and follows the cwd, unless the user has pinned one (see fileRootPinned).
+   */
+  fileRoot: string;
+  /** True once the user picked a folder explicitly, which stops it following `cd`. */
+  fileRootPinned: boolean;
+  /** Absolute paths of the files open as tabs in this terminal, in tab order. */
+  openFiles: string[];
+  /** Which of `openFiles` is showing, or null when the terminal tab is active. */
+  activeFile: string | null;
   status: "starting" | "running" | "exited" | "crashed" | "killed";
   pid: number | null;
   createdAt: number;
@@ -113,6 +125,8 @@ export interface TerminalExitEvent {
 export interface TerminalCwdEvent {
   terminalId: string;
   cwd: string;
+  repoRoot: string | null;
+  fileRoot: string;
 }
 
 export interface TerminalRenamedEvent {

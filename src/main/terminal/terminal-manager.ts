@@ -5,6 +5,8 @@ import { execFile } from "child_process";
 import { promises as fsp } from "fs";
 import { createLogger } from "../util/logger";
 import { generateId } from "../util/ids";
+import { findRepoRoot, resolveFileRoot } from "../util/repo";
+import { registerRoot } from "../util/path-guard";
 import { detectShells } from "./shell-detector";
 import { processInputBuffer, stripInputEscapeSequences } from "./prompt-capture";
 import type { ActiveTerminal, ShellConfig, SpawnOptions } from "./terminal-types";
@@ -308,7 +310,11 @@ export class TerminalManager {
       cwd,
       cwdLabel,
       projectName,
-      repoRoot: null,
+      repoRoot: findRepoRoot(cwd),
+      fileRoot: resolveFileRoot(cwd),
+      fileRootPinned: false,
+      openFiles: [],
+      activeFile: null,
       status: "starting",
       pid: pty.pid,
       createdAt: now,
@@ -484,6 +490,10 @@ export class TerminalManager {
       lastInputAt: null,
       lastInputPromptAt: null,
       cwdProbeTimer: null,
+      // Grants the file IPC read/write access to this terminal's project folder.
+      // Nothing outside a live terminal's root (or a folder the user picked in a
+      // native dialog) is reachable from the renderer -- see util/path-guard.
+      releaseFileRoot: registerRoot(session.fileRoot),
     };
 
     this.terminals.set(id, active);
@@ -654,7 +664,11 @@ export class TerminalManager {
       name: preservedName,
     };
 
-    // Remove old entry
+    // Remove old entry. Release its file-root grant first -- the replacement
+    // terminal takes its own, and leaving this one held would keep the folder
+    // readable for the rest of the session.
+    active.releaseFileRoot?.();
+    active.releaseFileRoot = null;
     this.terminals.delete(id);
 
     // Create new terminal
@@ -701,6 +715,8 @@ export class TerminalManager {
     logger.info(`Cleaning up ${this.terminals.size} terminals`);
     for (const [, active] of this.terminals) {
       this.clearQuietTimer(active);
+      active.releaseFileRoot?.();
+      active.releaseFileRoot = null;
       try {
         active.pty.kill();
       } catch {
@@ -853,8 +869,80 @@ export class TerminalManager {
   }
 
   /**
+   * Apply a newly-detected cwd to a session: derived labels, the enclosing repo
+   * root, the folder the file explorer is rooted at, and the renderer event.
+   *
+   * All three cwd detectors (the OS probe and the two prompt-text regexes) funnel
+   * through here so they can't drift apart -- and so the file-root grant is
+   * always released and re-taken together with the cwd it was derived from.
+   */
+  private applyCwdChange(id: string, detected: string): void {
+    const active = this.terminals.get(id);
+    if (!active || active.session.cwd === detected) return;
+
+    const session = active.session;
+    session.cwd = detected;
+    session.cwdLabel = this.shortenCwd(detected);
+    session.projectName = this.extractProjectName(detected);
+    session.repoRoot = findRepoRoot(detected);
+    session.updatedAt = Date.now();
+
+    // Follow the cwd only while the user hasn't pinned a root themselves: once
+    // they've picked a folder in the drawer, `cd`-ing around shouldn't yank the
+    // tree out from under them.
+    if (!session.fileRootPinned) {
+      const nextRoot = resolveFileRoot(detected);
+      if (nextRoot !== session.fileRoot) {
+        active.releaseFileRoot?.();
+        session.fileRoot = nextRoot;
+        active.releaseFileRoot = registerRoot(nextRoot);
+      }
+    }
+
+    if (this.ipcWindow && !this.ipcWindow.isDestroyed()) {
+      this.ipcWindow.webContents.send("terminal:cwdChanged", {
+        terminalId: id,
+        cwd: detected,
+        repoRoot: session.repoRoot,
+        fileRoot: session.fileRoot,
+      });
+    }
+  }
+
+  /**
+   * Pin the file explorer to a specific folder for this terminal (the drawer's
+   * "Open folder…"). Pinning also grants read/write access to that tree.
+   */
+  setFileRoot(id: string, dir: string): void {
+    const active = this.terminals.get(id);
+    if (!active || !dir) return;
+    active.releaseFileRoot?.();
+    active.session.fileRoot = dir;
+    active.session.fileRootPinned = true;
+    active.session.updatedAt = Date.now();
+    active.releaseFileRoot = registerRoot(dir);
+
+    if (this.ipcWindow && !this.ipcWindow.isDestroyed()) {
+      this.ipcWindow.webContents.send("terminal:cwdChanged", {
+        terminalId: id,
+        cwd: active.session.cwd,
+        repoRoot: active.session.repoRoot,
+        fileRoot: dir,
+      });
+    }
+  }
+
+  /** Remember which files a terminal has open, so a saved workspace can restore its tabs. */
+  setOpenFiles(id: string, openFiles: string[], activeFile: string | null): void {
+    const active = this.terminals.get(id);
+    if (!active) return;
+    active.session.openFiles = openFiles;
+    active.session.activeFile = activeFile;
+  }
+
+  /**
    * Probe the shell's real cwd from the OS and, if it changed, update the
-   * session and notify the renderer (same shape as detectCwdChange's emit).
+   * session and notify the renderer.
    */
   private async probeAndUpdateCwd(id: string): Promise<void> {
     const active = this.terminals.get(id);
@@ -862,21 +950,7 @@ export class TerminalManager {
     const detected = await probeCwd(active.pty.pid);
     if (!detected) return;
     // The terminal may have been torn down while lsof was running.
-    const current = this.terminals.get(id);
-    if (!current || current.session.cwd === detected) return;
-
-    const session = current.session;
-    session.cwd = detected;
-    session.cwdLabel = this.shortenCwd(detected);
-    session.projectName = this.extractProjectName(detected);
-    session.updatedAt = Date.now();
-
-    if (this.ipcWindow && !this.ipcWindow.isDestroyed()) {
-      this.ipcWindow.webContents.send("terminal:cwdChanged", {
-        terminalId: id,
-        cwd: detected,
-      });
-    }
+    this.applyCwdChange(id, detected);
   }
 
   /**
@@ -893,18 +967,8 @@ export class TerminalManager {
     const psMatch = data.match(/([A-Za-z]:\\[^:]+)>/);
     if (psMatch && psMatch[1]) {
       const detectedCwd = psMatch[1].trim();
-      if (detectedCwd !== session.cwd && detectedCwd.length > 2) {
-        session.cwd = detectedCwd;
-        session.cwdLabel = this.shortenCwd(detectedCwd);
-        session.projectName = this.extractProjectName(detectedCwd);
-        session.updatedAt = Date.now();
-
-        if (this.ipcWindow && !this.ipcWindow.isDestroyed()) {
-          this.ipcWindow.webContents.send("terminal:cwdChanged", {
-            terminalId: session.id,
-            cwd: detectedCwd,
-          });
-        }
+      if (detectedCwd.length > 2) {
+        this.applyCwdChange(session.id, detectedCwd);
       }
       return;
     }
@@ -914,18 +978,8 @@ export class TerminalManager {
     const bashMatch = data.match(/[:\s]((?:~|\/)[\w\-/.\s]*)\s*[\$#%]\s*$/m);
     if (bashMatch && bashMatch[1]) {
       const detectedCwd = this.expandTilde(bashMatch[1].trim());
-      if (detectedCwd !== session.cwd && detectedCwd.length > 1) {
-        session.cwd = detectedCwd;
-        session.cwdLabel = this.shortenCwd(detectedCwd);
-        session.projectName = this.extractProjectName(detectedCwd);
-        session.updatedAt = Date.now();
-
-        if (this.ipcWindow && !this.ipcWindow.isDestroyed()) {
-          this.ipcWindow.webContents.send("terminal:cwdChanged", {
-            terminalId: session.id,
-            cwd: detectedCwd,
-          });
-        }
+      if (detectedCwd.length > 1) {
+        this.applyCwdChange(session.id, detectedCwd);
       }
     }
   }

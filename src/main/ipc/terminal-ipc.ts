@@ -108,5 +108,21 @@ export function registerTerminalIPC(window: BrowserWindow): void {
     }
   });
 
+  ipcMain.handle("terminal:setFileRoot", async (_, { terminalId, dir }) => {
+    try {
+      terminalManager.setFileRoot(terminalId, dir);
+    } catch (error) {
+      logger.error(`IPC: terminal:setFileRoot failed for ${terminalId}`, error);
+    }
+  });
+
+  ipcMain.handle("terminal:setOpenFiles", async (_, { terminalId, openFiles, activeFile }) => {
+    try {
+      terminalManager.setOpenFiles(terminalId, openFiles ?? [], activeFile ?? null);
+    } catch (error) {
+      logger.error(`IPC: terminal:setOpenFiles failed for ${terminalId}`, error);
+    }
+  });
+
   logger.info("Terminal IPC handlers registered");
 }

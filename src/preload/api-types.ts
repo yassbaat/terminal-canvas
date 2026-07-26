@@ -12,6 +12,14 @@ import type {
 import type { PromptEntry, CreatePromptOptions } from "@renderer/type/prompt";
 import type { Workspace, WorkspaceSummary, SaveWorkspaceOptions } from "@renderer/type/workspace";
 import type { GeneratedName, GroqSettings, NamingContext, GroupNamingContext } from "@renderer/type/groq";
+import type {
+  DirEntry,
+  ReadFileResult,
+  WriteFileResult,
+  FileStatResult,
+  FileChangedEvent,
+  WatchKind,
+} from "@renderer/type/file";
 
 export interface TerminalAPI {
   create(options: CreateTerminalOptions): Promise<TerminalSession>;
@@ -26,6 +34,10 @@ export interface TerminalAPI {
   getBuffer(terminalId: string): Promise<string>;
   setIdleThreshold(ms: number): Promise<void>;
   setIdleDetectionEnabled(terminalId: string, enabled: boolean): Promise<void>;
+  /** Pin the file explorer to a folder, and grant the renderer access to that tree. */
+  setFileRoot(terminalId: string, dir: string): Promise<void>;
+  /** Mirror the open file tabs into main so a saved workspace can restore them. */
+  setOpenFiles(terminalId: string, openFiles: string[], activeFile: string | null): Promise<void>;
   onData(callback: (event: TerminalDataEvent) => void): () => void;
   onExit(callback: (event: TerminalExitEvent) => void): () => void;
   onCwdChanged(callback: (event: TerminalCwdEvent) => void): () => void;
@@ -81,6 +93,38 @@ export interface DialogAPI {
   }): Promise<{ canceled: boolean; filePaths: string[] }>;
 }
 
+/**
+ * Filesystem access. Every path here is checked against an allowlist in main
+ * (util/path-guard) built from live terminals' project folders plus anything the
+ * user picked in a native dialog -- the renderer cannot reach outside it, and
+ * cannot widen it except via `addRoot` with a path a dialog just returned.
+ */
+export interface FileAPI {
+  listDir(path: string, showHidden?: boolean): Promise<DirEntry[]>;
+  read(path: string): Promise<ReadFileResult>;
+  /**
+   * Write `content`, but only if the file's mtime still matches
+   * `expectedMtimeMs`. A mismatch resolves with `{ conflict: true }` and writes
+   * nothing -- an agent rewriting the file mid-edit is the normal case here.
+   */
+  write(path: string, content: string, expectedMtimeMs?: number): Promise<WriteFileResult>;
+  stat(path: string): Promise<FileStatResult>;
+  /** Returns a watch id, or null if the path couldn't be watched. */
+  watch(path: string, kind: WatchKind): Promise<string | null>;
+  unwatch(watchId: string): Promise<void>;
+  createFile(path: string): Promise<string>;
+  createDirectory(path: string): Promise<string>;
+  rename(from: string, to: string): Promise<string>;
+  /** Moves to the OS trash, never an unlink. */
+  trash(path: string): Promise<void>;
+  reveal(path: string): Promise<void>;
+  /** Grant access to a folder the user just picked. Returns the granted directory. */
+  addRoot(path: string): Promise<string>;
+  listRoots(): Promise<string[]>;
+  homeDir(): Promise<string>;
+  onChanged(callback: (event: FileChangedEvent) => void): () => void;
+}
+
 export interface PreloadAPI {
   platform: NodeJS.Platform;
   terminal: TerminalAPI;
@@ -89,6 +133,7 @@ export interface PreloadAPI {
   groq: GroqAPI;
   shell: ShellAPI;
   dialog: DialogAPI;
+  file: FileAPI;
 }
 
 declare global {

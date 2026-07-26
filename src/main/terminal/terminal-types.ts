@@ -64,4 +64,11 @@ export interface ActiveTerminal {
    * triggers the probe mid-run.
    */
   cwdProbeTimer: ReturnType<typeof setTimeout> | null;
+  /**
+   * Disposer for this terminal's file-root grant (util/path-guard). Held for as
+   * long as the terminal is alive, re-taken when its root changes, and released
+   * on teardown -- that grant is the only reason the renderer can read or write
+   * anything in this project folder.
+   */
+  releaseFileRoot: (() => void) | null;
 }

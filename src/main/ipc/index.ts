@@ -4,6 +4,7 @@ import { registerWorkspaceIPC } from "./workspace-ipc";
 import { registerGroqIPC } from "./groq-ipc";
 import { registerShellIPC } from "./shell-ipc";
 import { registerDialogIPC } from "./dialog-ipc";
+import { registerFileIPC } from "./file-ipc";
 
 /**
  * Register all IPC handlers for the main process.
@@ -16,4 +17,5 @@ export function registerAllIPC(window: BrowserWindow): void {
   registerGroqIPC();
   registerShellIPC();
   registerDialogIPC();
+  registerFileIPC(window);
 }
