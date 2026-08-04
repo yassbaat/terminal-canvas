@@ -4,9 +4,14 @@ import type { TerminalSession } from "@renderer/type/terminal";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useUIStore } from "@renderer/store/ui";
+import { useFileStore } from "@renderer/store/file";
 import FocusTile from "./FocusTile.vue";
 import PromptRail from "@renderer/component/terminal/PromptRail.vue";
+import FileDrawer from "@renderer/component/file/FileDrawer.vue";
+import CodeView from "@renderer/component/file/CodeView.vue";
 import { sessionDisplayName } from "@renderer/util/sessionName";
+import { getBasename } from "@renderer/util/path";
+import { AGENT_META } from "@renderer/util/agents";
 import {
   X,
   Plus,
@@ -17,11 +22,13 @@ import {
   ArrowLeft,
   ArrowLeftRight,
   Grid2x2,
+  PanelLeft,
 } from "lucide-vue-next";
 
 const terminalStore = useTerminalStore();
 const workspaceStore = useWorkspaceStore();
 const uiStore = useUIStore();
+const fileStore = useFileStore();
 
 // The live sessions currently staged (order preserved, dead ones dropped).
 const stagedSessions = computed(
@@ -237,6 +244,67 @@ const memorySession = computed(() =>
 
 const perScreenLabel = computed(() => `${uiStore.focusPerScreen} per screen`);
 
+// ─── Files panel (stage-level, pinned left) ──────────────────────
+//
+// One tree + one editor for the whole stage rather than one per tile: the
+// point of Focus Mode is watching several terminals at once, and a tree inside
+// every tile would spend that space four times over. The tree follows the
+// focused terminal's project, so clicking into a different terminal re-roots
+// it -- which is only comprehensible if it's obvious which terminal has focus,
+// hence the name in this panel's header and the ring on the tile itself.
+
+/** Whose project the tree is showing: the focused tile, else the first staged. */
+const filesSession = computed(() => {
+  const focused = uiStore.focusSet.includes(terminalStore.focusedTerminalId ?? "")
+    ? terminalStore.sessions.get(terminalStore.focusedTerminalId as string)
+    : undefined;
+  return focused ?? stagedSessions.value[0] ?? null;
+});
+
+const filesRoot = computed(() => filesSession.value?.fileRoot ?? "");
+const filesAgentColor = computed(() =>
+  filesSession.value?.activeAgent ? AGENT_META[filesSession.value.activeAgent].color : null
+);
+
+const focusFileName = computed(() =>
+  uiStore.focusFilePath ? getBasename(uiStore.focusFilePath) : null
+);
+
+function openFocusFile(path: string): void {
+  uiStore.openFocusFile(path);
+}
+
+function setFilesRoot(dir: string): void {
+  const session = filesSession.value;
+  if (!session) return;
+  terminalStore.updateSession(session.id, { fileRoot: dir, fileRootPinned: true });
+  void window.api.terminal.setFileRoot(session.id, dir);
+}
+
+// Width: dragged, not fixed -- a tree is fine at 260px and a file being read
+// is not. Session-scoped like the rest of the Focus layout state.
+const filesWidth = ref(340);
+let filesResize: { startX: number; startWidth: number } | null = null;
+
+function beginFilesResize(e: PointerEvent): void {
+  e.preventDefault();
+  filesResize = { startX: e.clientX, startWidth: filesWidth.value };
+  window.addEventListener("pointermove", onFilesResize);
+  window.addEventListener("pointerup", endFilesResize);
+}
+
+function onFilesResize(e: PointerEvent): void {
+  if (!filesResize) return;
+  const next = filesResize.startWidth + (e.clientX - filesResize.startX);
+  filesWidth.value = Math.min(720, Math.max(220, next));
+}
+
+function endFilesResize(): void {
+  window.removeEventListener("pointermove", onFilesResize);
+  window.removeEventListener("pointerup", endFilesResize);
+  filesResize = null;
+}
+
 function exit(): void {
   uiStore.exitFocus();
 }
@@ -277,7 +345,22 @@ function onKeyDown(e: KeyboardEvent): void {
   }
 }
 
-onMounted(() => window.addEventListener("keydown", onKeyDown));
+onMounted(() => {
+  window.addEventListener("keydown", onKeyDown);
+
+  // Come up with the Files panel already open when the terminals being staged
+  // had files open on the canvas -- their per-tile tabs don't exist here, and
+  // entering Focus Mode shouldn't look like the files were dropped. If the
+  // focused terminal had one showing, show that one. Otherwise the panel stays
+  // closed and the Files button in the bar opens it.
+  if (uiStore.focusFilesOpen) return;
+  const owner = filesSession.value;
+  if (!owner) return;
+  const active = fileStore.getActiveTab(owner.id);
+  const anyOpen = stagedSessions.value.some((s) => fileStore.getTabs(s.id).length > 0);
+  if (active) uiStore.openFocusFile(active);
+  else if (anyOpen) uiStore.toggleFocusFiles();
+});
 onUnmounted(() => {
   window.removeEventListener("keydown", onKeyDown);
   // Tear down any in-flight drag listeners so nothing leaks if we exit
@@ -286,6 +369,8 @@ onUnmounted(() => {
   window.removeEventListener("pointerup", onSwapEnd);
   window.removeEventListener("pointermove", onGutterMove);
   window.removeEventListener("pointerup", onGutterUp);
+  window.removeEventListener("pointermove", onFilesResize);
+  window.removeEventListener("pointerup", endFilesResize);
   document.body.classList.remove("focus-swap-dragging");
 });
 </script>
@@ -301,6 +386,15 @@ onUnmounted(() => {
         <button class="focus-exit" title="Exit focus (Esc)" @click="exit">
           <ArrowLeft :size="15" />
           <span>Back to canvas</span>
+        </button>
+        <button
+          class="focus-exit focus-files-toggle"
+          :class="{ active: uiStore.focusFilesOpen }"
+          title="Show files beside the stage"
+          @click="uiStore.toggleFocusFiles()"
+        >
+          <PanelLeft :size="15" />
+          <span>Files</span>
         </button>
         <span class="focus-title">
           <Grid2x2 :size="14" />
@@ -357,6 +451,56 @@ onUnmounted(() => {
 
     <!-- Stage -->
     <div class="focus-stage">
+      <!-- Files: one tree + one editor for the whole stage, rooted at the
+           focused terminal's project (named in the header so a re-root is
+           never a surprise). -->
+      <div
+        v-if="uiStore.focusFilesOpen && filesSession"
+        class="focus-files"
+        :style="{ width: filesWidth + 'px' }"
+      >
+        <div class="focus-files-header">
+          <span class="focus-files-label">Files</span>
+          <span class="focus-files-owner" :title="filesSession.cwd">
+            <span
+              class="focus-files-dot"
+              :style="{ background: filesAgentColor ?? 'var(--tc-accent)' }"
+            />
+            {{ sessionDisplayName(filesSession) }}
+          </span>
+          <button class="focus-files-close" title="Hide files" @click="uiStore.toggleFocusFiles()">
+            <X :size="13" />
+          </button>
+        </div>
+
+        <div class="focus-files-tree">
+          <FileDrawer
+            :terminal-id="filesSession.id"
+            :root="filesRoot"
+            :active-path="uiStore.focusFilePath"
+            @open="openFocusFile"
+            @root-change="setFilesRoot"
+          />
+        </div>
+
+        <div v-if="uiStore.focusFilePath" class="focus-files-editor">
+          <div class="focus-files-editor-bar">
+            <span class="focus-files-editor-name">{{ focusFileName }}</span>
+            <button class="focus-files-close" title="Close file" @click="uiStore.clearFocusFile()">
+              <X :size="13" />
+            </button>
+          </div>
+          <CodeView :key="uiStore.focusFilePath" :path="uiStore.focusFilePath" :active="true" />
+        </div>
+      </div>
+
+      <div
+        v-if="uiStore.focusFilesOpen && filesSession"
+        class="focus-files-resizer"
+        title="Drag to resize"
+        @pointerdown="beginFilesResize"
+      />
+
       <div v-if="pageTiles.length === 0" class="focus-empty">
         <p>No terminals on the stage.</p>
         <button class="focus-add-btn" @click="addTerminal">
@@ -650,6 +794,140 @@ onUnmounted(() => {
   pointer-events: none;
 }
 
+/* ─── Files panel ─── */
+.focus-files {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex-shrink: 0;
+  border: 1px solid var(--tc-border-color);
+  border-radius: var(--tc-border-radius);
+  overflow: hidden;
+  background: var(--tc-bg-card);
+}
+
+.focus-files-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 10px;
+  background: var(--tc-bg-header);
+  border-bottom: 1px solid var(--tc-border-color);
+  flex-shrink: 0;
+}
+
+.focus-files-label {
+  font-size: var(--tc-font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--tc-text-muted);
+  flex-shrink: 0;
+}
+
+/* Names the terminal the tree is rooted at. Without it, clicking into another
+   terminal silently swaps the whole tree out from under you. */
+.focus-files-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+  font-size: var(--tc-font-size-xs);
+  color: var(--tc-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.focus-files-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.focus-files-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  border-radius: var(--tc-border-radius-sm);
+  color: var(--tc-text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.focus-files-close:hover {
+  background: var(--tc-bg-hover);
+  color: var(--tc-text-primary);
+}
+
+/* Tree shrinks to make room once a file is open, but never disappears -- the
+   whole point is browsing to the next file without leaving the stage. */
+.focus-files-tree {
+  flex: 1 1 auto;
+  min-height: 90px;
+  overflow: hidden;
+  display: flex;
+}
+
+.focus-files-tree :deep(.file-drawer) {
+  flex: 1;
+  border-right: none;
+}
+
+.focus-files-editor {
+  flex: 2 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--tc-border-color);
+}
+
+.focus-files-editor-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 10px;
+  background: var(--tc-bg-header);
+  border-bottom: 1px solid color-mix(in srgb, var(--tc-info) 30%, var(--tc-border-color));
+  flex-shrink: 0;
+}
+
+.focus-files-editor-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tc-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.focus-files-resizer {
+  width: 6px;
+  margin: 0 -6px 0 -2px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  border-radius: 3px;
+  transition: background var(--tc-transition-fast);
+}
+
+.focus-files-resizer:hover,
+.focus-files-resizer:active {
+  background: var(--tc-accent);
+}
+
+.focus-files-toggle.active {
+  border-color: var(--tc-accent);
+  color: var(--tc-accent);
+}
+
 .focus-memory {
   width: 300px;
   flex-shrink: 0;
@@ -697,13 +975,13 @@ onUnmounted(() => {
   gap: 10px;
   padding: 10px 14px;
   background: var(--tc-bg-card);
-  border: 1px solid var(--tc-warning);
+  border: 1px solid var(--tc-attention);
   border-radius: var(--tc-border-radius);
   box-shadow: var(--tc-shadow-lg);
 }
 
 .focus-alert-icon {
-  color: var(--tc-warning);
+  color: var(--tc-attention);
   flex-shrink: 0;
 }
 

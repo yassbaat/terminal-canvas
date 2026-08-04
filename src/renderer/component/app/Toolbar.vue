@@ -329,12 +329,12 @@ function enterFocusMode() {
 }
 
 .attention-btn-active {
-  color: var(--tc-warning);
+  color: var(--tc-attention);
 }
 
 .attention-btn-active:hover {
-  background: var(--tc-warning-soft);
-  color: var(--tc-warning);
+  background: var(--tc-attention-soft);
+  color: var(--tc-attention);
 }
 
 @keyframes pulse {

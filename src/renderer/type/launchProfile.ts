@@ -1,4 +1,4 @@
-import type { LucideIcon } from "lucide-vue-next";
+import type { Component } from "vue";
 
 /** What's actually persisted to localStorage for a custom profile -- no
  * component references here, since those can't survive JSON round-tripping. */
@@ -13,7 +13,7 @@ export interface LaunchProfile {
   label: string;
   /** Shell command typed and submitted once the new terminal's shell is ready. Empty = plain shell, no auto-run. */
   command: string;
-  icon: LucideIcon;
+  icon: Component;
   color: string;
   isBuiltIn: boolean;
 }

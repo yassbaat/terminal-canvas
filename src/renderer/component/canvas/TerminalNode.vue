@@ -14,7 +14,6 @@ import { sessionDisplayName } from "@renderer/util/sessionName";
 import { useResizeHandle } from "@renderer/composable/useResizeHandle";
 import { Bell } from "lucide-vue-next";
 import TerminalHeader from "@renderer/component/terminal/TerminalHeader.vue";
-import TerminalFooter from "@renderer/component/terminal/TerminalFooter.vue";
 import XtermView from "@renderer/component/terminal/XtermView.vue";
 import PromptRail from "@renderer/component/terminal/PromptRail.vue";
 import FileDrawer from "@renderer/component/file/FileDrawer.vue";
@@ -43,7 +42,7 @@ const summaryStore = useSummaryStore();
 // Local state
 // Hidden by default -- most terminals don't need it open all the time, and
 // it competes for space with the actual terminal. Toggled per-terminal via
-// the footer's prompt-count button.
+// the header's Agent Memory button.
 const showPromptRail = ref(false);
 const isHovered = ref(false);
 
@@ -229,9 +228,8 @@ function focusSolo(): void {
 }
 
 // Handle kill action from header
-function handleKill(): void {
-  terminalStore.killSession(props.id);
-  terminalStore.removeSession(props.id);
+async function handleKill(): Promise<void> {
+  await terminalStore.closeSession(props.id);
 }
 
 // Handle restart action from header
@@ -301,7 +299,7 @@ watch(
       :title="attentionTitle"
       @click.stop="acknowledgeAttention"
     >
-      <Bell :size="13" />
+      <Bell :size="14" />
     </button>
     <div class="terminal-node-inner">
       <!-- File explorer, occupying the space the node grew into on its left. -->
@@ -313,7 +311,6 @@ watch(
           :root="fileRoot"
           :active-path="activeTab"
           @open="openFile"
-          @close="toggleDrawer"
           @root-change="changeFileRoot"
           @drag-file="tagFileDrag"
         />
@@ -332,9 +329,11 @@ watch(
           :can-focus="true"
           :can-toggle-files="true"
           :files-open="drawerOpen"
+          :memory-visible="showPromptRail"
           @focus="terminalStore.setFocused(id)"
           @focus-solo="focusSolo"
           @toggle-files="toggleDrawer"
+          @toggle-memory="showPromptRail = !showPromptRail"
           @kill="handleKill"
           @restart="handleRestart"
           @clear="handleClear"
@@ -345,8 +344,6 @@ watch(
         <FileTabStrip
           v-if="hasTabs || drawerOpen"
           :terminal-id="id"
-          :drawer-open="drawerOpen"
-          @toggle-drawer="toggleDrawer"
         />
 
         <!-- Body: xterm terminal + optional prompt rail -->
@@ -384,13 +381,6 @@ watch(
             :style="{ '--memory-rail-width': uiStore.memoryRailWidth + 'px' }"
           />
         </div>
-
-        <!-- Footer: CWD + dimensions -->
-        <TerminalFooter
-          :session="data.session"
-          :memory-visible="showPromptRail"
-          @toggle-memory="showPromptRail = !showPromptRail"
-        />
       </div>
 
       <!-- Resize handled by NodeResizer -->
@@ -471,46 +461,34 @@ watch(
   height: 100%;
   display: flex;
   /* Row, not column: the file drawer sits beside the terminal, which keeps its
-     own header/tabs/footer stack inside .terminal-main. */
+     own header/tabs stack inside .terminal-main. */
   flex-direction: row;
   background: var(--tc-bg-card);
-  border: 1px solid var(--tc-border-color);
   border-radius: var(--tc-border-radius);
   overflow: hidden;
-  box-shadow: var(--tc-shadow-md);
+  /* No border by default -- with dozens of terminals on a canvas, a border on
+     every single one reads as visual noise before you've even looked at any
+     of them. A two-layer elevation shadow (soft+wide, tight+close) is enough
+     to separate a card from the canvas
+     behind it; a ring/outline is reserved for things that actually need your
+     attention -- selected, or a finished/waiting terminal below. */
+  box-shadow: 0 10px 28px -12px rgba(0, 0, 0, 0.45), 0 3px 8px -3px rgba(0, 0, 0, 0.3);
   transition: box-shadow var(--tc-transition-fast);
 }
 
-.terminal-node.selected .terminal-node-inner {
-  box-shadow: 0 0 0 2px var(--tc-accent), var(--tc-shadow-lg);
+.terminal-node.selected .terminal-node-inner,
+.terminal-node.focused .terminal-node-inner {
+  box-shadow: 0 0 0 2px var(--tc-accent), 0 10px 28px -12px rgba(0, 0, 0, 0.45), 0 3px 8px -3px rgba(0, 0, 0, 0.3);
 }
 
-/* Figma-style selection: the whole header bar turns accent-colored so a
-   selected terminal is unmistakable at a glance -- not just a thin ring around
-   the card. Targets the child TerminalHeader's scoped elements via :deep. */
-.terminal-node.selected :deep(.terminal-header) {
-  background: var(--tc-accent);
-  border-bottom-color: color-mix(in srgb, var(--tc-accent) 65%, black);
-}
-
-.terminal-node.selected :deep(.header-name),
-.terminal-node.selected :deep(.header-cwd),
-.terminal-node.selected :deep(.header-btn) {
-  color: #fff;
-}
-
-.terminal-node.selected :deep(.header-shell-badge) {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.18);
-}
-
-.terminal-node.selected :deep(.header-btn:hover) {
-  background: rgba(255, 255, 255, 0.22);
-  color: #fff;
-}
-
-.terminal-node.selected :deep(.header-name:hover) {
-  text-decoration-color: #fff;
+/* A soft accent-tinted wash rather than a full solid-color inversion -- still
+   unmistakable that this is the selected terminal, without the whole bar
+   turning into a block of color and forcing every icon/label to switch to
+   white just to stay legible on it. */
+.terminal-node.selected :deep(.terminal-header),
+.terminal-node.focused :deep(.terminal-header) {
+  background: color-mix(in srgb, var(--tc-accent) 14%, var(--tc-bg-header));
+  border-bottom-color: color-mix(in srgb, var(--tc-accent) 35%, var(--tc-border-color));
 }
 
 .terminal-main {
@@ -547,16 +525,10 @@ watch(
   z-index: 2;
 }
 
-.terminal-node.focused .terminal-node-inner {
-  box-shadow: 0 0 0 1px var(--tc-accent-soft), var(--tc-shadow-md);
-}
-
-.terminal-node.selected.focused .terminal-node-inner {
-  box-shadow: 0 0 0 2px var(--tc-accent), var(--tc-shadow-lg);
-}
-
+/* Needs-attention wins visually over selected/focused (a finished terminal
+   you haven't looked at yet is more urgent than which one you last clicked). */
 .terminal-node.needs-attention .terminal-node-inner {
-  box-shadow: 0 0 0 2px var(--tc-warning), var(--tc-shadow-lg);
+  box-shadow: 0 0 0 2px var(--tc-attention), 0 10px 28px -12px rgba(0, 0, 0, 0.45), 0 3px 8px -3px rgba(0, 0, 0, 0.3);
   animation: attention-pulse 1.6s ease-in-out infinite;
 }
 
@@ -567,8 +539,8 @@ watch(
 }
 
 @keyframes attention-pulse {
-  0%, 100% { box-shadow: 0 0 0 2px var(--tc-warning), var(--tc-shadow-lg); }
-  50% { box-shadow: 0 0 0 4px var(--tc-warning), var(--tc-shadow-lg); }
+  0%, 100% { box-shadow: 0 0 0 2px var(--tc-attention), 0 10px 28px -12px rgba(0, 0, 0, 0.45), 0 3px 8px -3px rgba(0, 0, 0, 0.3); }
+  50% { box-shadow: 0 0 0 4px var(--tc-attention), 0 10px 28px -12px rgba(0, 0, 0, 0.45), 0 3px 8px -3px rgba(0, 0, 0, 0.3); }
 }
 
 .attention-badge {
@@ -579,8 +551,8 @@ watch(
   height: 26px;
   border-radius: 50%;
   border: 2px solid var(--tc-bg-primary);
-  background: var(--tc-warning);
-  color: #1a1a2e;
+  background: var(--tc-attention);
+  color: var(--tc-bg-primary);
   font-size: 13px;
   display: flex;
   align-items: center;
@@ -596,7 +568,7 @@ watch(
 }
 
 /* "Waiting for your input" reads differently from a plain idle/bell finish:
-   accent-colored rather than the amber warning, since it's an active block. */
+   full accent rather than the calmer --tc-attention, since it's an active block. */
 .attention-badge-input {
   background: var(--tc-accent);
   color: #fff;

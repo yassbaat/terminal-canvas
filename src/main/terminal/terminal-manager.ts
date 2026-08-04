@@ -16,6 +16,18 @@ import { BrowserWindow } from "electron";
 
 const logger = createLogger("TerminalManager");
 
+/**
+ * Output that means "the next line the user types is a secret".
+ *
+ * Prompt capture watches keystrokes on their way to the PTY, so it sees what
+ * the terminal is deliberately not echoing. Anything matching this gets the
+ * following submitted line dropped rather than stored -- see
+ * ActiveTerminal.echoSuppressed. Kept broad on purpose: over-suppressing costs
+ * one missing Agent Memory entry, under-suppressing writes a password to disk.
+ */
+const SECRET_PROMPT_PATTERN =
+  /(password|passphrase|verification code|authentication code|secret key|api key|2fa|one[- ]time code)[^\n]{0,80}:[ \t]*$/i;
+
 // How long output must have been quiet before we consider a busy terminal
 // "settled" (i.e. the running command/agent turn has finished). This is a
 // fixed implementation detail, distinct from the user-configurable
@@ -276,13 +288,25 @@ export class TerminalManager {
     // what a normal terminal app opens into.
     const cwd = options.cwd ?? os.homedir();
 
-    // Spawn the PTY process
+    // Spawn the PTY process.
+    // The app's own environment can carry another terminal's session identity
+    // (launched from Apple Terminal, `process.env` includes TERM_PROGRAM=
+    // "Apple_Terminal" and its TERM_SESSION_ID). zsh's /etc/zshrc_Apple_Terminal
+    // then runs its session save/restore against a ~/.zsh_sessions entry that
+    // belongs to (or was already cleaned up by) the parent terminal, printing
+    // "…historynew: No such file or directory" / rm errors into every PTY.
+    // Present ourselves as our own TERM_PROGRAM and drop the inherited ids.
+    const env = { ...process.env } as { [key: string]: string };
+    delete env.TERM_SESSION_ID;
+    delete env.SHELL_SESSION_ID;
+    delete env.TERM_PROGRAM_VERSION;
+    env.TERM_PROGRAM = "CanvasCLI";
     const pty = spawn(shellConfig.path, shellConfig.args, {
       name: "xterm-256color",
       cols,
       rows,
       cwd,
-      env: process.env as { [key: string]: string },
+      env,
       // ConPTY is a Windows-only backend; node-pty ignores this on
       // macOS/Linux, but keep it explicit so intent is clear per platform.
       ...(process.platform === "win32" ? { useConpty: true } : {}),
@@ -371,6 +395,7 @@ export class TerminalManager {
           active.outputBuffer = active.outputBuffer.slice(-OUTPUT_BUFFER_LIMIT);
         }
         this.updateCursorVisibility(active, data);
+        this.updateEchoSuppression(active, data);
       }
 
       // Forward data to renderer
@@ -474,6 +499,18 @@ export class TerminalManager {
       session.exitedAt = Date.now();
       session.updatedAt = Date.now();
 
+      // The shell is gone (the user typed `exit`, or it crashed), so hand back
+      // its file-root grant -- otherwise the renderer keeps read/write/delete
+      // access to that project folder for the rest of the app session. The
+      // map entry stays: the renderer still shows the exited terminal and can
+      // restart it. registerRoot's disposer is idempotent, so a later
+      // killTerminal on the same id is harmless.
+      const exited = this.terminals.get(id);
+      if (exited) {
+        exited.releaseFileRoot?.();
+        exited.releaseFileRoot = null;
+      }
+
       if (this.ipcWindow && !this.ipcWindow.isDestroyed()) {
         this.ipcWindow.webContents.send("terminal:exit", { terminalId: id, exitCode });
       }
@@ -499,8 +536,15 @@ export class TerminalManager {
       // Nothing outside a live terminal's root (or a folder the user picked in a
       // native dialog) is reachable from the renderer -- see util/path-guard.
       releaseFileRoot: registerRoot(session.fileRoot),
+      echoSuppressed: false,
     };
 
+    // Never overwrite a live entry. After a renderer reload the store's map is
+    // empty, so loadWorkspace's pre-restore kill loop kills nothing and then
+    // restores each terminal under its *saved* id -- clobbering a still-running
+    // pty that nothing would then reference, so cleanupAll() on quit couldn't
+    // kill it and the shell outlived the app.
+    this.dispose(id);
     this.terminals.set(id, active);
 
     // Mark as running once spawned
@@ -558,12 +602,39 @@ export class TerminalManager {
     }
   }
 
+  /**
+   * Notice when the program is asking for a secret, so the line the user types
+   * next never becomes a captured prompt.
+   *
+   * Matched against the tail of the visible output with escape sequences
+   * stripped, because the prompt is normally the last thing printed before the
+   * cursor waits. The pattern is deliberately loose about what sits between
+   * the keyword and the colon -- real prompts include
+   * `Password for 'https://user@github.com':` (git),
+   * `user@host's password:` (OpenSSH) and `Verification code:` (2FA).
+   */
+  private updateEchoSuppression(active: ActiveTerminal, data: string): void {
+    const tail = stripInputEscapeSequences(data).slice(-200);
+    if (SECRET_PROMPT_PATTERN.test(tail)) {
+      active.echoSuppressed = true;
+    }
+  }
+
   private flushInputBuffer(id: string): void {
     const active = this.terminals.get(id);
     if (!active) return;
 
     const buffer = active.inputBuffer;
     active.inputBuffer = "";
+
+    // The line just submitted answered a password/passphrase prompt. Drop it
+    // without a trace: it must not reach Agent Memory, the workspace file on
+    // disk, or the naming service.
+    if (active.echoSuppressed) {
+      active.echoSuppressed = false;
+      logger.debug(`Suppressed prompt capture for terminal ${id} (secret input)`);
+      return;
+    }
 
     if (buffer.trim().length === 0) return;
 
@@ -625,6 +696,33 @@ export class TerminalManager {
     logger.debug(`Resized terminal ${id} to ${cols}x${rows}`);
   }
 
+  /**
+   * Tear down the bookkeeping for a terminal that is going away: kill its pty
+   * if it is somehow still alive, hand back its file-root grant, and drop the
+   * map entry.
+   *
+   * The file-root grant is the important half. path-guard is the only thing
+   * standing between the renderer and the disk, and a terminal's grant is what
+   * makes its project folder reachable. Without releasing it, closing a
+   * terminal left the renderer able to read, write and delete inside that
+   * project for the rest of the app session. registerRoot's disposer is
+   * idempotent, so calling this on both the kill and the natural-exit path is
+   * safe.
+   */
+  private dispose(id: string): void {
+    const active = this.terminals.get(id);
+    if (!active) return;
+    this.clearQuietTimer(active);
+    try {
+      active.pty.kill();
+    } catch {
+      // Already gone -- the point of this call is the cleanup below.
+    }
+    active.releaseFileRoot?.();
+    active.releaseFileRoot = null;
+    this.terminals.delete(id);
+  }
+
   killTerminal(id: string): void {
     const active = this.terminals.get(id);
     if (!active) {
@@ -634,12 +732,7 @@ export class TerminalManager {
     logger.info(`Killing terminal ${id} (PID: ${active.session.pid})`);
     active.session.status = "killed";
     active.session.updatedAt = Date.now();
-    this.clearQuietTimer(active);
-    try {
-      active.pty.kill();
-    } catch (err) {
-      logger.error(`Error killing terminal ${id}:`, err);
-    }
+    this.dispose(id);
   }
 
   restartTerminal(id: string): TerminalSession {

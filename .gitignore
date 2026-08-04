@@ -34,3 +34,13 @@ workspaces/
 # Misc
 groq.txt
 cli-canvas.zip
+
+# Scratch / reference material that must never ship in a release tarball.
+# .cate-analysis is a checkout of an unrelated third-party app kept only as
+# a reference; session_* are exported debug sessions.
+.cate-analysis/
+session_*/
+session_*.zip
+*.dmg
+Cate*-arm64
+Cate*-x64

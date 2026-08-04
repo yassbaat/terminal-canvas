@@ -30,15 +30,16 @@ function focusGroup(): void {
   uiStore.enterFocus(ids);
 }
 
+// Keep in sync with the identical array in store/workspace.ts.
 const GROUP_COLORS = [
-  "#e94560",
-  "#4ecca3",
-  "#64b5f6",
-  "#f9a825",
-  "#e040fb",
-  "#4dd0e1",
-  "#ab47bc",
-  "#ff8a65",
+  "hsl(218, 94%, 51%)", // accent blue
+  "hsl(152, 62%, 45%)", // green
+  "hsl(199, 88%, 58%)", // info cyan-blue
+  "hsl(38, 92%, 56%)", // amber
+  "hsl(300, 75%, 65%)", // magenta
+  "hsl(180, 70%, 55%)", // cyan
+  "hsl(280, 60%, 62%)", // purple
+  "hsl(22, 85%, 58%)", // orange
 ];
 
 // Local collapsed state (synced with workspace data)
@@ -142,7 +143,16 @@ watch(
   () => props.position,
   (pos, oldPos) => {
     if (pos) {
-      workspaceStore.updateGroup(props.id, { x: pos.x, y: pos.y });
+      // Only persist while the user is actually dragging the frame. The
+      // frame's position also changes programmatically when a member terminal
+      // is dragged and the group travels with it, and writing that to the
+      // store mid-drag makes Vue Flow re-sync `:nodes` and stomp the in-flight
+      // positions of everything else back to their stale values -- which is
+      // exactly what nudgeNodeLive exists to avoid. The final position is
+      // committed on drag stop by WorkspaceCanvas.
+      if (props.dragging) {
+        workspaceStore.updateGroup(props.id, { x: pos.x, y: pos.y });
+      }
       const dx = oldPos ? pos.x - oldPos.x : 0;
       const dy = oldPos ? pos.y - oldPos.y : 0;
       // Only pull members along when the FRAME itself is being dragged by the
@@ -220,15 +230,15 @@ watch(
         :title="isCollapsed ? 'Expand group' : 'Collapse group'"
         @click.stop="toggleCollapse"
       >
-        <ChevronRight v-if="isCollapsed" :size="13" />
-        <ChevronDown v-else :size="13" />
+        <ChevronRight v-if="isCollapsed" :size="14" />
+        <ChevronDown v-else :size="14" />
       </button>
       <button
         class="group-collapse-btn group-ungroup-btn"
         title="Ungroup (terminals are kept)"
         @click.stop="ungroup"
       >
-        <Ungroup :size="13" />
+        <Ungroup :size="14" />
       </button>
     </div>
 
@@ -251,7 +261,7 @@ watch(
           title="Remove from group"
           @click.stop="removeTerminal(session!.id)"
         >
-          <X :size="11" />
+          <X :size="12" />
         </button>
       </div>
 
@@ -260,7 +270,7 @@ watch(
         :key="note!.id"
         class="group-terminal-item"
       >
-        <StickyNoteIcon class="group-note-icon" :size="11" />
+        <StickyNoteIcon class="group-note-icon" :size="12" />
         <span class="group-terminal-name" :title="note!.text || 'Empty note'">
           {{ note!.text ? note!.text.split('\n')[0].slice(0, 30) : "Empty note" }}
         </span>
@@ -269,7 +279,7 @@ watch(
           title="Remove from group"
           @click.stop="removeNote(note!.id)"
         >
-          <X :size="11" />
+          <X :size="12" />
         </button>
       </div>
 

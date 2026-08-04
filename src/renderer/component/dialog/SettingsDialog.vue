@@ -15,12 +15,11 @@ import {
   Rocket,
   Sparkles,
   MonitorCog,
-  Moon,
-  Sun,
   Monitor,
   Plus,
   Pencil,
   Trash2,
+  Check,
 } from "lucide-vue-next";
 
 const props = defineProps<{
@@ -110,11 +109,39 @@ const sizeMatchesPreset = computed(
 );
 
 // Appearance — theme
-const THEME_OPTIONS: Array<{ value: ThemePreference; label: string; icon: unknown }> = [
-  { value: "dark", label: "Dark", icon: Moon },
-  { value: "light", label: "Light", icon: Sun },
-  { value: "system", label: "System", icon: Monitor },
+const THEME_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
+  { value: "dark", label: "Dark" },
+  { value: "light", label: "Light" },
+  { value: "system", label: "System" },
 ];
+
+// Literal (non-var()) colors for the preview cards below, since a card has
+// to show what its OWN theme looks like regardless of which theme is
+// currently active -- var(--tc-*) would just resolve to whatever theme the
+// rest of the dialog is already in. Kept in sync with variables.css by hand;
+// there are only two, so a build-time export felt like more machinery than
+// the problem needs. Terminal Canvas has no per-theme syntax palette (see
+// --tc-syn-* in variables.css, which is intentionally theme-independent), so
+// the preview mocks a terminal prompt rather than a code editor -- an
+// honest picture of what switching themes actually changes here.
+const THEME_PREVIEW: Record<"dark" | "light", { bg: string; text: string; accent: string; success: string; warning: string; error: string }> = {
+  dark: {
+    bg: "hsl(43, 28%, 5%)",
+    text: "hsl(40, 25%, 94%)",
+    accent: "hsl(218, 94%, 51%)",
+    success: "hsl(152, 62%, 45%)",
+    warning: "hsl(38, 92%, 56%)",
+    error: "hsl(356, 82%, 59%)",
+  },
+  light: {
+    bg: "hsl(43, 30%, 97%)",
+    text: "hsl(40, 25%, 12%)",
+    accent: "hsl(221, 88%, 45%)",
+    success: "hsl(152, 65%, 32%)",
+    warning: "hsl(36, 85%, 38%)",
+    error: "hsl(356, 72%, 46%)",
+  },
+};
 
 // Groq settings
 const groqSettings = ref<GroqSettings>({
@@ -127,6 +154,19 @@ const groqSettings = ref<GroqSettings>({
 });
 const testingGroq = ref(false);
 const groqTestResult = ref<string | null>(null);
+
+/**
+ * Forget the stored key. This needs its own action because saving a blank
+ * field deliberately means "leave the key alone" -- otherwise the onboarding
+ * dialog, which re-sends its settings with an empty field on every advance,
+ * would wipe a key supplied via GROQ_API_KEY.
+ */
+async function removeApiKey(): Promise<void> {
+  await window.api.groq.clearApiKey();
+  groqSettings.value.apiKey = "";
+  groqTestResult.value = null;
+  uiStore.showToast("Groq API key removed");
+}
 
 // System integration
 const contextMenuRegistered = ref(false);
@@ -312,6 +352,22 @@ async function toggleContextMenu() {
                 </div>
               </div>
             </div>
+
+            <div class="setting-divider" />
+
+            <div class="setting-block">
+              <label class="toggle-row">
+                <input
+                  type="checkbox"
+                  :checked="uiStore.fileExplorerDefaultOpen"
+                  @change="uiStore.setFileExplorerDefaultOpen(($event.target as HTMLInputElement).checked)"
+                />
+                <span class="toggle-text">
+                  <span class="toggle-title">Open the file explorer in new terminals</span>
+                  <span class="toggle-sub">Show the file tree beside every new terminal that starts in a project. The terminal keeps its size — the explorer claims new space to its left — so turn this off to keep new terminals narrow. Either way, the Files button in a terminal's header toggles it any time.</span>
+                </span>
+              </label>
+            </div>
           </section>
 
           <!-- Appearance -->
@@ -324,17 +380,53 @@ async function toggleContextMenu() {
                 Applies to the app chrome. Terminals keep their dark palette in both
                 themes, as terminals always do.
               </p>
-              <div class="segmented">
+              <div class="theme-grid">
                 <button
                   v-for="opt in THEME_OPTIONS"
                   :key="opt.value"
                   type="button"
-                  class="segmented-btn segmented-btn-icon"
+                  class="theme-card"
                   :class="{ active: uiStore.themePreference === opt.value }"
                   @click="uiStore.setThemePreference(opt.value)"
                 >
-                  <component :is="opt.icon" :size="14" />
-                  <span>{{ opt.label }}</span>
+                  <span v-if="uiStore.themePreference === opt.value" class="theme-card-check">
+                    <Check :size="11" />
+                  </span>
+
+                  <!-- Dark / Light: a small terminal-prompt mock plus the
+                       theme's actual accent/status colors -- this app has no
+                       per-theme syntax palette, so a fake code editor would
+                       show something you'd never actually see. -->
+                  <span
+                    v-if="opt.value === 'dark' || opt.value === 'light'"
+                    class="theme-preview"
+                    :style="{ background: THEME_PREVIEW[opt.value].bg }"
+                  >
+                    <span class="theme-preview-prompt" :style="{ color: THEME_PREVIEW[opt.value].text }">
+                      <span :style="{ color: THEME_PREVIEW[opt.value].accent }">&gt;</span> run
+                    </span>
+                    <span class="theme-preview-swatches">
+                      <span class="theme-swatch" :style="{ background: THEME_PREVIEW[opt.value].accent }" />
+                      <span class="theme-swatch" :style="{ background: THEME_PREVIEW[opt.value].success }" />
+                      <span class="theme-swatch" :style="{ background: THEME_PREVIEW[opt.value].warning }" />
+                      <span class="theme-swatch" :style="{ background: THEME_PREVIEW[opt.value].error }" />
+                    </span>
+                  </span>
+
+                  <!-- System: honestly split rather than faked as a fixed
+                       palette, since it resolves to whichever of the two
+                       above actually matches the OS at any given moment. -->
+                  <span
+                    v-else
+                    class="theme-preview theme-preview-split"
+                    :style="{ background: `linear-gradient(135deg, ${THEME_PREVIEW.dark.bg} 0%, ${THEME_PREVIEW.dark.bg} 49%, ${THEME_PREVIEW.light.bg} 51%, ${THEME_PREVIEW.light.bg} 100%)` }"
+                  >
+                    <span class="theme-preview-split-badge">
+                      <Monitor :size="13" />
+                    </span>
+                  </span>
+
+                  <span class="theme-card-label">{{ opt.label }}</span>
                 </button>
               </div>
             </div>
@@ -373,6 +465,22 @@ async function toggleContextMenu() {
                 <span class="toggle-text">
                   <span class="toggle-title">Show shell type</span>
                   <span class="toggle-sub">Display which shell each terminal runs (zsh, bash, PowerShell…) in headers, the Layers list and the Inspector. Off by default.</span>
+                </span>
+              </label>
+            </div>
+
+            <div class="setting-divider" />
+
+            <div class="setting-block">
+              <label class="toggle-row">
+                <input
+                  type="checkbox"
+                  :checked="uiStore.minimapVisible"
+                  @change="uiStore.setMinimapVisible(($event.target as HTMLInputElement).checked)"
+                />
+                <span class="toggle-text">
+                  <span class="toggle-title">Show minimap</span>
+                  <span class="toggle-sub">The canvas overview in the bottom-left corner. Turn it off to reclaim the space on a small display.</span>
                 </span>
               </label>
             </div>
@@ -472,8 +580,10 @@ async function toggleContextMenu() {
             <div class="setting-block">
               <label class="setting-label">Built-in providers</label>
               <p class="setting-desc">
-                Available when creating a new terminal — pick one to have its command
-                typed and submitted automatically once the shell is ready.
+                Each one's command is typed and submitted automatically once the shell
+                is ready. The New Terminal dialog offers the four most-used as one-click
+                chips; the rest live here — still recognized (and badged) whenever you
+                launch them by hand.
               </p>
               <div class="profile-list">
                 <div
@@ -555,7 +665,14 @@ async function toggleContextMenu() {
             <div class="setting-block">
               <label class="setting-label">API key</label>
               <input v-model="groqSettings.apiKey" class="tc-input" placeholder="gsk_..." type="password" />
-              <p class="setting-desc">Leave empty to use the <code>GROQ_API_KEY</code> environment variable.</p>
+              <p class="setting-desc">
+                Stored in your system keychain. Leave empty to use the
+                <code>GROQ_API_KEY</code> environment variable — a blank field keeps
+                the saved key rather than clearing it.
+              </p>
+              <button class="tc-btn tc-btn-sm setting-inline-btn" type="button" @click="removeApiKey">
+                Remove saved key
+              </button>
             </div>
 
             <div class="setting-block">
@@ -820,6 +937,11 @@ async function toggleContextMenu() {
   cursor: pointer;
 }
 
+.setting-inline-btn {
+  align-self: flex-start;
+  margin-top: 8px;
+}
+
 .setting-desc {
   font-size: var(--tc-font-size-xs);
   color: var(--tc-text-muted);
@@ -877,6 +999,107 @@ async function toggleContextMenu() {
 .segmented-btn.active {
   background: var(--tc-accent);
   color: #fff;
+  font-weight: 600;
+}
+
+/* Theme picker */
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  max-width: 460px;
+}
+
+.theme-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--tc-border-color);
+  border-radius: var(--tc-border-radius);
+  background: var(--tc-bg-secondary);
+  cursor: pointer;
+  transition: border-color var(--tc-transition-fast), box-shadow var(--tc-transition-fast);
+  font-family: var(--tc-font-sans);
+}
+
+.theme-card:hover {
+  border-color: var(--tc-border-focus);
+}
+
+.theme-card.active {
+  border-color: var(--tc-accent);
+  box-shadow: 0 0 0 1px var(--tc-accent);
+}
+
+.theme-card-check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--tc-accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+
+.theme-preview {
+  height: 60px;
+  border-radius: var(--tc-border-radius-sm);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 8px;
+  overflow: hidden;
+}
+
+.theme-preview-prompt {
+  font-family: var(--tc-font-mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.theme-preview-swatches {
+  display: flex;
+  gap: 4px;
+}
+
+.theme-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.theme-preview-split {
+  align-items: center;
+  justify-content: center;
+}
+
+.theme-preview-split-badge {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--tc-bg-card);
+  color: var(--tc-text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--tc-shadow-sm);
+}
+
+.theme-card-label {
+  font-size: var(--tc-font-size-sm);
+  color: var(--tc-text-secondary);
+  text-align: center;
+}
+
+.theme-card.active .theme-card-label {
+  color: var(--tc-text-primary);
   font-weight: 600;
 }
 

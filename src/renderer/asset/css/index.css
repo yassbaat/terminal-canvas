@@ -25,6 +25,16 @@ body {
   user-select: none;
 }
 
+/* lucide-vue-next defaults to a 2px stroke on a 24-unit viewBox, which reads
+   as thin/hairline at the small sizes used throughout the chrome (11-18px).
+   CSS `stroke-width` overrides the SVG presentation attribute lucide sets, so
+   this is a single global nudge toward a slightly bolder weight (closer to
+   Phosphor's "regular" weight, which is what Cate uses) rather than editing
+   every icon usage individually. */
+.lucide {
+  stroke-width: 2.25;
+}
+
 /* ===== Scrollbar ===== */
 ::-webkit-scrollbar {
   width: 6px;
@@ -59,9 +69,11 @@ body {
   z-index: var(--tc-z-node-selected);
 }
 
-.vue-flow__node.selected .terminal-node-inner {
-  box-shadow: 0 0 0 2px var(--tc-accent), var(--tc-shadow-lg);
-}
+/* The selection ring itself lives in TerminalNode.vue's own scoped
+   `.terminal-node.selected` rule (driven by the `selected` prop Vue Flow
+   passes to the node), which targets the exact same element -- this used to
+   duplicate that box-shadow here too, which just meant two places to update
+   in sync. */
 
 .vue-flow__background {
   background-color: var(--tc-bg-primary);

@@ -1,93 +1,139 @@
 :root {
-  /* Base backgrounds */
-  --tc-bg-primary: #1a1a2e;
-  --tc-bg-secondary: #16213e;
-  --tc-bg-tertiary: #0f3460;
-  --tc-bg-card: #1e1e2f;
-  --tc-bg-header: #252538;
-  --tc-bg-hover: #2a2a45;
-  --tc-bg-active: #323250;
+  /*
+   * Color system -- built from two brand anchors, everything else derived
+   * by color theory rather than picked by eye:
+   *   --tc-hue-neutral: 43deg  (the warm amber-black of #100e09)
+   *   --tc-hue-accent:  218deg (the azure blue of #0d63f8)
+   * 218 - 43 = 175, i.e. accent sits almost exactly opposite the neutral on
+   * the color wheel (true complement would be 223deg) -- a warm, near-black
+   * ground with a cool, near-complementary accent is what makes the accent
+   * pop instead of just sitting on top of gray. Every other hue below is
+   * placed by explicit degree offset from one of these two anchors, and
+   * every token is hsl()/hsla() for that reason -- change --tc-hue-accent
+   * and the whole family (hover states, focus rings, group colors, syntax
+   * highlights) rotates together instead of drifting out of sync.
+   *
+   * Status hues are spaced for readability at a glance, not evenly around
+   * the wheel: success(152)/info(199) sit in the cool half near accent(218)
+   * so they read as "part of the same UI"; warning(38) borrows the neutral's
+   * own warmth but at far higher saturation/lightness so it still reads as
+   * a color and not just another gray; error(356) is kept far from every
+   * other hue since it's the one color that must never be ambiguous.
+   */
+  --tc-bg-primary: hsl(43, 28%, 5%);
+  --tc-bg-secondary: hsl(42, 22%, 8%);
+  --tc-bg-tertiary: hsl(42, 20%, 11%);
+  --tc-bg-card: hsl(40, 15%, 10%);
+  --tc-bg-header: hsl(40, 14%, 13%);
+  --tc-bg-hover: hsl(40, 13%, 16%);
+  --tc-bg-active: hsl(40, 12%, 20%);
 
   /* Borders */
-  --tc-border-color: #2a2a40;
-  --tc-border-focus: #4a4a6a;
+  --tc-border-color: hsl(40, 12%, 17%);
+  --tc-border-focus: hsl(218, 45%, 40%);
   --tc-border-radius: 8px;
   --tc-border-radius-sm: 4px;
 
-  /* Text */
-  --tc-text-primary: #e0e0ff;
-  --tc-text-secondary: #a0a0c0;
-  --tc-text-muted: #6a6a8a;
-  --tc-text-inverse: #1a1a2e;
+  /* Text -- warm off-white rather than neutral gray, so it stays in the
+     same tinted family as the backgrounds instead of looking blue-cast. */
+  --tc-text-primary: hsl(40, 25%, 94%);
+  --tc-text-secondary: hsl(38, 12%, 70%);
+  --tc-text-muted: hsl(36, 9%, 46%);
+  --tc-text-inverse: hsl(43, 28%, 5%);
 
   /* Accent */
-  --tc-accent: #e94560;
-  --tc-accent-hover: #ff6b81;
-  --tc-accent-soft: rgba(233, 69, 96, 0.15);
+  --tc-accent: hsl(218, 94%, 51%);
+  --tc-accent-hover: hsl(218, 96%, 61%);
+  --tc-accent-soft: hsla(218, 94%, 51%, 0.15);
 
-  /* Status */
-  --tc-success: #4ecca3;
-  --tc-success-soft: rgba(78, 204, 163, 0.1);
-  --tc-warning: #f9a825;
-  --tc-warning-soft: rgba(249, 168, 37, 0.1);
-  --tc-error: #e94560;
-  --tc-info: #64b5f6;
+  /* Status -- error is now fully independent of accent (it wasn't before:
+     the old accent WAS the error red). Blue can't double as "danger", so
+     don't reuse --tc-accent for --tc-error again even if a future rebrand
+     changes the accent hue back toward warm. */
+  --tc-success: hsl(152, 62%, 45%);
+  --tc-success-soft: hsla(152, 62%, 45%, 0.1);
+  --tc-warning: hsl(38, 92%, 56%);
+  --tc-warning-soft: hsla(38, 92%, 56%, 0.1);
+  --tc-error: hsl(356, 82%, 59%);
+
+  /* Attention -- a calmer, blue-tinted alternative to --tc-warning for the
+     "needs attention" notification system (idle/bell finish, off-duty toggle,
+     layer badges). Sits between --tc-info(199) and --tc-accent(218) in hue
+     and well below --tc-warning's saturation, so it reads as "part of the
+     same cool palette" instead of a jarring, separately-hued alert color.
+     "Waiting for your input" (the more urgent sub-case) stays on the full
+     --tc-accent, not this token -- see TerminalNode.vue's attention-badge-input. */
+  --tc-attention: hsl(205, 60%, 58%);
+  --tc-attention-soft: hsla(205, 60%, 58%, 0.12);
+  --tc-info: hsl(199, 88%, 58%);
 
   /* Group containers (canvas) */
-  --tc-group-bg: rgba(30, 30, 47, 0.3);
-  --tc-group-selected-bg: rgba(233, 69, 96, 0.05);
+  --tc-group-bg: hsla(40, 15%, 55%, 0.08);
+  --tc-group-selected-bg: hsla(218, 94%, 51%, 0.06);
 
   /* Terminal status dots */
-  --tc-status-running: #4ecca3;
-  --tc-status-starting: #f9a825;
-  --tc-status-exited: #6a6a8a;
-  --tc-status-crashed: #e94560;
-  --tc-status-killed: #ff7043;
+  --tc-status-running: hsl(152, 62%, 45%);
+  --tc-status-starting: hsl(38, 92%, 56%);
+  --tc-status-exited: hsl(36, 9%, 46%);
+  --tc-status-crashed: hsl(356, 82%, 59%);
+  --tc-status-killed: hsl(22, 85%, 58%);
 
-  /* Terminal area */
-  --tc-terminal-bg: #0d0d1a;
-  --tc-terminal-text: #e0e0e0;
+  /* Terminal area -- the literal brand black; every other dark surface in
+     the app is a lighter step off this same hue. */
+  --tc-terminal-bg: hsl(43, 28%, 5%);
+  --tc-terminal-text: hsl(40, 15%, 90%);
+
+  /* Onboarding / empty-state hero glow -- a soft accent-colored radial wash
+     that fades to transparent, meant to be layered as a second `background`
+     image over a solid --tc-bg-* color (it does nothing on its own). Used
+     wherever a first-run or empty-state surface wants a bit of "designed"
+     warmth instead of a flat fill -- see HomeView.vue and
+     OnboardingDialog.vue. Kept as one token so both stay in sync. */
+  --tc-hero-glow: radial-gradient(ellipse 900px 560px at 50% -12%, hsla(218, 90%, 55%, 0.20), transparent 65%);
 
   /* Code editor -- syntax token colors.
      Defined once, not per theme, because the editor sits on the terminal
      surface (--tc-terminal-bg), which is deliberately dark in both light and
      dark mode. Switching between a terminal tab and a file tab inside the same
      node would otherwise strobe from dark to light. The hues deliberately reuse
-     the app palette (accent crimson, success mint, warning amber, info blue) so
-     code reads as part of the same product rather than a pasted-in editor. */
+     the app palette (accent blue, success green, warning amber, info cyan) so
+     code reads as part of the same product rather than a pasted-in editor.
+     Keyword/property/tag borrow a violet a third of the way around the wheel
+     from the accent (218 -> 265/250) so they read as "related to the brand
+     blue" without being mistaken for interactive accent elements. */
   --tc-editor-bg: var(--tc-terminal-bg);
-  --tc-editor-fg: #d7d7f0;
-  --tc-editor-gutter-fg: #55557a;
-  --tc-editor-gutter-active-fg: #a0a0c0;
+  --tc-editor-fg: hsl(40, 20%, 88%);
+  --tc-editor-gutter-fg: hsl(38, 8%, 42%);
+  --tc-editor-gutter-active-fg: hsl(38, 12%, 65%);
   --tc-editor-active-line: rgba(255, 255, 255, 0.035);
-  --tc-editor-selection: rgba(100, 181, 246, 0.28);
-  --tc-editor-cursor: #e94560;
-  --tc-editor-match: rgba(78, 204, 163, 0.25);
+  --tc-editor-selection: hsla(199, 88%, 58%, 0.28);
+  --tc-editor-cursor: hsl(218, 94%, 51%);
+  --tc-editor-match: hsla(152, 62%, 45%, 0.25);
 
-  --tc-syn-comment: #6a6a8a;
-  --tc-syn-keyword: #ff7b9c;
-  --tc-syn-string: #4ecca3;
-  --tc-syn-number: #f9a825;
-  --tc-syn-function: #64b5f6;
-  --tc-syn-variable: #d7d7f0;
-  --tc-syn-property: #b3a1ff;
-  --tc-syn-type: #7fd6ff;
-  --tc-syn-constant: #ff9f68;
-  --tc-syn-operator: #a0a0c0;
-  --tc-syn-punctuation: #8a88a8;
-  --tc-syn-tag: #ff7b9c;
-  --tc-syn-attribute: #f9a825;
-  --tc-syn-heading: #64b5f6;
-  --tc-syn-link: #64b5f6;
-  --tc-syn-invalid: #ff5370;
+  --tc-syn-comment: hsl(36, 9%, 46%);
+  --tc-syn-keyword: hsl(265, 75%, 74%);
+  --tc-syn-string: hsl(152, 55%, 60%);
+  --tc-syn-number: hsl(38, 85%, 64%);
+  --tc-syn-function: hsl(199, 85%, 66%);
+  --tc-syn-variable: hsl(40, 20%, 88%);
+  --tc-syn-property: hsl(250, 65%, 78%);
+  --tc-syn-type: hsl(190, 75%, 68%);
+  --tc-syn-constant: hsl(24, 80%, 66%);
+  --tc-syn-operator: hsl(38, 8%, 60%);
+  --tc-syn-punctuation: hsl(38, 7%, 48%);
+  --tc-syn-tag: hsl(265, 75%, 74%);
+  --tc-syn-attribute: hsl(38, 85%, 64%);
+  --tc-syn-heading: hsl(218, 90%, 68%);
+  --tc-syn-link: hsl(218, 90%, 68%);
+  --tc-syn-invalid: hsl(356, 88%, 66%);
 
   /* Agent Memory (Prompt Rail) */
-  --tc-memory-bg: #181828;
-  --tc-memory-border: #2a2a42;
-  --tc-memory-item-bg: #1e1e32;
-  --tc-memory-item-hover: #252540;
-  --tc-memory-pinned-bg: rgba(78, 204, 163, 0.08);
-  --tc-memory-pinned-border: rgba(78, 204, 163, 0.25);
+  --tc-memory-bg: hsl(40, 16%, 9%);
+  --tc-memory-border: hsl(40, 13%, 16%);
+  --tc-memory-item-bg: hsl(40, 14%, 11%);
+  --tc-memory-item-hover: hsl(40, 13%, 15%);
+  --tc-memory-pinned-bg: hsla(152, 62%, 45%, 0.08);
+  --tc-memory-pinned-border: hsla(152, 62%, 45%, 0.25);
 
   /* Typography */
   /* Ordered so a real, well-hinted monospace font is used on every platform
@@ -131,7 +177,6 @@
   --tc-z-toolbar: 100;
   --tc-z-sidebar: 101;
   --tc-z-inspector: 102;
-  --tc-z-statusbar: 103;
   --tc-z-modal: 200;
   --tc-z-tooltip: 300;
 }
@@ -143,65 +188,77 @@
  * Font/spacing/z-index/transition tokens are shared and not redefined here.
  */
 :root[data-theme="light"] {
-  /* Base backgrounds */
-  --tc-bg-primary: #f4f3fa;
-  --tc-bg-secondary: #e9e8f3;
-  --tc-bg-tertiary: #dde6f7;
-  --tc-bg-card: #ffffff;
-  --tc-bg-header: #f2f1f9;
-  --tc-bg-hover: #ebeaf5;
-  --tc-bg-active: #e0dff0;
+  /* Same warm hue-43 neutral family as dark mode, just re-mapped to high
+     lightness instead of low, so switching themes doesn't also switch the
+     "temperature" of the UI. */
+  --tc-bg-primary: hsl(43, 30%, 97%);
+  --tc-bg-secondary: hsl(42, 25%, 93%);
+  --tc-bg-tertiary: hsl(42, 30%, 88%);
+  --tc-bg-card: hsl(0, 0%, 100%);
+  --tc-bg-header: hsl(43, 25%, 96%);
+  --tc-bg-hover: hsl(42, 22%, 91%);
+  --tc-bg-active: hsl(42, 20%, 87%);
 
   /* Borders */
-  --tc-border-color: #dcdae8;
-  --tc-border-focus: #b7b4d0;
+  --tc-border-color: hsl(40, 18%, 85%);
+  --tc-border-focus: hsl(218, 40%, 70%);
 
   /* Text */
-  --tc-text-primary: #1c1b2e;
-  --tc-text-secondary: #55536e;
-  --tc-text-muted: #86849c;
-  --tc-text-inverse: #ffffff;
+  --tc-text-primary: hsl(40, 25%, 12%);
+  --tc-text-secondary: hsl(38, 12%, 34%);
+  --tc-text-muted: hsl(36, 9%, 54%);
+  --tc-text-inverse: hsl(0, 0%, 100%);
 
-  /* Accent (deepened slightly for AA contrast on white) */
-  --tc-accent: #d1264a;
-  --tc-accent-hover: #b81f3f;
-  --tc-accent-soft: rgba(209, 38, 74, 0.12);
+  /* Accent (deepened slightly for AA contrast on white, same hue as dark mode) */
+  --tc-accent: hsl(221, 88%, 45%);
+  --tc-accent-hover: hsl(221, 85%, 38%);
+  --tc-accent-soft: hsla(221, 88%, 45%, 0.12);
 
   /* Status */
-  --tc-success: #1f9d78;
-  --tc-success-soft: rgba(31, 157, 120, 0.1);
-  --tc-warning: #a86a06;
-  --tc-warning-soft: rgba(168, 106, 6, 0.1);
-  --tc-error: #d1264a;
-  --tc-info: #2f6fb0;
+  --tc-success: hsl(152, 65%, 32%);
+  --tc-success-soft: hsla(152, 65%, 32%, 0.1);
+  --tc-warning: hsl(36, 85%, 38%);
+  --tc-warning-soft: hsla(36, 85%, 38%, 0.1);
+  --tc-error: hsl(356, 72%, 46%);
+  --tc-info: hsl(203, 70%, 42%);
+
+  /* Attention (see dark theme for the reasoning) -- deepened for AA contrast on white. */
+  --tc-attention: hsl(205, 65%, 42%);
+  --tc-attention-soft: hsla(205, 65%, 42%, 0.1);
 
   /* Terminal status dots */
-  --tc-status-running: #1f9d78;
-  --tc-status-starting: #a86a06;
-  --tc-status-exited: #8b899e;
-  --tc-status-crashed: #d1264a;
-  --tc-status-killed: #c1552c;
+  --tc-status-running: hsl(152, 65%, 32%);
+  --tc-status-starting: hsl(36, 85%, 38%);
+  --tc-status-exited: hsl(38, 8%, 58%);
+  --tc-status-crashed: hsl(356, 72%, 46%);
+  --tc-status-killed: hsl(20, 70%, 42%);
 
   /* Terminal area -- kept dark deliberately; ANSI palettes are tuned for a
      dark ground and every other terminal app keeps this convention. See
      XtermView.vue for the matching light-mode xterm color theme. */
-  --tc-terminal-bg: #12121c;
-  --tc-terminal-text: #e4e2ee;
+  --tc-terminal-bg: hsl(43, 24%, 8%);
+  --tc-terminal-text: hsl(40, 15%, 92%);
 
   /* Agent Memory (Prompt Rail) */
-  --tc-memory-bg: #f6f5fb;
-  --tc-memory-border: #e0deec;
-  --tc-memory-item-bg: #ffffff;
-  --tc-memory-item-hover: #ece9f7;
-  --tc-memory-pinned-bg: rgba(31, 157, 120, 0.08);
-  --tc-memory-pinned-border: rgba(31, 157, 120, 0.3);
+  --tc-memory-bg: hsl(43, 30%, 96%);
+  --tc-memory-border: hsl(40, 20%, 87%);
+  --tc-memory-item-bg: hsl(0, 0%, 100%);
+  --tc-memory-item-hover: hsl(42, 22%, 91%);
+  --tc-memory-pinned-bg: hsla(152, 65%, 32%, 0.08);
+  --tc-memory-pinned-border: hsla(152, 65%, 32%, 0.3);
 
   /* Group containers (canvas) */
-  --tc-group-bg: rgba(180, 178, 210, 0.16);
-  --tc-group-selected-bg: rgba(209, 38, 74, 0.05);
+  --tc-group-bg: hsla(40, 20%, 50%, 0.14);
+  --tc-group-selected-bg: hsla(221, 88%, 45%, 0.05);
 
-  /* Shadows -- lighter alpha; heavy dark shadows read as smudges on white */
-  --tc-shadow-sm: 0 1px 3px rgba(30, 30, 60, 0.08);
-  --tc-shadow-md: 0 4px 12px rgba(30, 30, 60, 0.1);
-  --tc-shadow-lg: 0 8px 24px rgba(30, 30, 60, 0.14);
+  /* Hero glow -- softer than dark mode; a saturated wash reads as a stain
+     on white rather than a glow. */
+  --tc-hero-glow: radial-gradient(ellipse 900px 560px at 50% -12%, hsla(221, 85%, 55%, 0.12), transparent 65%);
+
+  /* Shadows -- lighter alpha, and warm-tinted to match the neutral family
+     instead of the old cool-indigo tint; heavy dark shadows read as smudges
+     on white regardless. */
+  --tc-shadow-sm: 0 1px 3px rgba(30, 26, 16, 0.08);
+  --tc-shadow-md: 0 4px 12px rgba(30, 26, 16, 0.1);
+  --tc-shadow-lg: 0 8px 24px rgba(30, 26, 16, 0.14);
 }

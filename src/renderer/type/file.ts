@@ -52,6 +52,42 @@ export interface FileChangedEvent {
   kind: WatchKind;
 }
 
+/**
+ * Project search. "name" matches path fragments (a quick-open), "content"
+ * matches the text inside files (a grep). Both walk the same allowlisted
+ * project roots -- see main/file/file-search.ts.
+ */
+export type FileSearchMode = "name" | "content";
+
+export interface FileSearchHit {
+  /** Absolute path of the matching file. */
+  path: string;
+  /** Path relative to the project root it was found under, for display. */
+  relativePath: string;
+  /** The project root this hit came from. */
+  root: string;
+  /** 1-based line number of the match. Content mode only. */
+  line?: number;
+  /** The matching line, trimmed and clipped around the match. Content mode only. */
+  preview?: string;
+  /** Start/end offsets of the match inside `preview`, for highlighting. */
+  matchStart?: number;
+  matchEnd?: number;
+}
+
+export interface FileSearchResult {
+  hits: FileSearchHit[];
+  /** True when the search stopped at a cap (result limit, file budget, deadline). */
+  truncated: boolean;
+  /** Number of project roots that were searched -- 0 means nothing is open. */
+  rootCount: number;
+  /**
+   * Set when a newer search superseded this one. The caller should ignore the
+   * result entirely rather than rendering an empty list.
+   */
+  superseded?: boolean;
+}
+
 /** A file open as a tab inside a terminal node, or as a detached canvas node. */
 export interface OpenFileState {
   path: string;

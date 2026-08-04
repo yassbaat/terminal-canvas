@@ -1,7 +1,16 @@
-import { existsSync, readFileSync, writeFileSync, readdirSync, unlinkSync, mkdirSync } from "fs";
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  readdirSync,
+  unlinkSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+} from "fs";
 import path from "path";
 import { createLogger } from "../util/logger";
-import { getWorkspacesDir, getWorkspaceFilePath } from "../util/paths";
+import { getWorkspacesDir, getWorkspaceFilePath, isValidWorkspaceId } from "../util/paths";
 import { WORKSPACE_VERSION } from "./workspace-types";
 import { generateId } from "../util/ids";
 import type { Workspace, WorkspaceSettings, WorkspaceSummary } from "@renderer/type/workspace";
@@ -26,12 +35,11 @@ const DEFAULT_SETTINGS: WorkspaceSettings = {
 function ensureWorkspacesDir(): void {
   const dir = getWorkspacesDir();
   if (!existsSync(dir)) {
-    try {
-      mkdirSync(dir, { recursive: true });
-      logger.info(`Created workspaces directory: ${dir}`);
-    } catch (err) {
-      logger.error(`Failed to create workspaces directory: ${dir}`, err);
-    }
+    // Deliberately not swallowed: if the directory can't be created, the save
+    // that follows cannot succeed either, and reporting success for a save
+    // that never happened is how people lose a day's layout.
+    mkdirSync(dir, { recursive: true });
+    logger.info(`Created workspaces directory: ${dir}`);
   }
 }
 
@@ -76,11 +84,41 @@ export function saveWorkspace(workspace: Workspace): void {
     settings: workspace.settings ?? { ...DEFAULT_SETTINGS },
   };
 
+  // Errors propagate to the IPC caller on purpose. Swallowing them here made
+  // the renderer report "Workspace saved" for a write that never landed --
+  // and, because it then advanced lastSavedAt, the close prompt stopped
+  // firing too, so the next quit discarded the workspace silently.
+  writeWorkspaceFile(filePath, toSave);
+  logger.info(`Workspace saved: ${workspace.name} (${workspace.id})`);
+}
+
+/**
+ * Write a workspace file atomically: fill a sibling temp file, then rename
+ * over the target.
+ *
+ * A workspace is tens to hundreds of KB, so a plain overwrite has a real
+ * window in which the file is truncated but not yet rewritten. Dying in that
+ * window (power loss, force quit, ENOSPC) left invalid JSON, and the parse
+ * failure is caught silently by listWorkspaces -- the workspace simply
+ * disappeared from the Home screen with no error and no recovery. rename() is
+ * atomic within a filesystem, so a reader sees either the old file or the new
+ * one.
+ *
+ * The temp suffix matters: listWorkspaces filters on `.json`, so a leftover
+ * `.json.tmp` from a failed write never shows up as a phantom workspace.
+ */
+function writeWorkspaceFile(filePath: string, payload: unknown): void {
+  const tmpPath = `${filePath}.tmp`;
   try {
-    writeFileSync(filePath, JSON.stringify(toSave, null, 2), "utf-8");
-    logger.info(`Workspace saved: ${workspace.name} (${workspace.id})`);
+    writeFileSync(tmpPath, JSON.stringify(payload, null, 2), "utf-8");
+    renameSync(tmpPath, filePath);
   } catch (err) {
-    logger.error(`Failed to save workspace ${workspace.id}:`, err);
+    try {
+      rmSync(tmpPath, { force: true });
+    } catch {
+      // Best effort -- the original file is still intact either way.
+    }
+    throw err;
   }
 }
 
@@ -88,6 +126,14 @@ export function saveWorkspace(workspace: Workspace): void {
  * Load a workspace from a JSON file.
  */
 export function loadWorkspace(workspaceId: string): Workspace | null {
+  // Degrade rather than throw: one malformed entry must not take out the
+  // caller. save/rename/delete still throw, because there the user asked for
+  // a specific destructive action and deserves to be told it didn't happen.
+  if (!isValidWorkspaceId(workspaceId)) {
+    logger.warn(`Refusing to load workspace with invalid id: ${workspaceId}`);
+    return null;
+  }
+
   const filePath = getWorkspaceFilePath(workspaceId);
 
   if (!existsSync(filePath)) {
@@ -107,7 +153,11 @@ export function loadWorkspace(workspaceId: string): Workspace | null {
     }
 
     const workspace: Workspace = {
-      id: parsed.workspaceId || workspaceId,
+      // The id we were asked for, not the one written inside the file. They
+      // are the same for every workspace the app produced, and using the
+      // validated one means a doctored `workspaceId` field can't come back
+      // and steer the next save.
+      id: workspaceId,
       name: parsed.name || "Untitled Workspace",
       createdAt: parsed.createdAt || Date.now(),
       updatedAt: parsed.updatedAt || Date.now(),
@@ -148,11 +198,20 @@ export function listWorkspaces(): WorkspaceSummary[] {
 
     for (const file of files) {
       const filePath = path.join(dir, file);
+      // The filename is the authoritative id -- that is what the path is built
+      // from. Trusting the `workspaceId` field inside the JSON instead let a
+      // hand-edited or shared file point save/rename/delete at any .json on
+      // the machine.
+      const id = file.slice(0, -".json".length);
+      if (!isValidWorkspaceId(id)) {
+        logger.warn(`Skipping workspace file with unusable name: ${file}`);
+        continue;
+      }
       try {
         const raw = readFileSync(filePath, "utf-8");
         const parsed = JSON.parse(raw);
         summaries.push({
-          id: parsed.workspaceId || file.replace(".json", ""),
+          id,
           name: parsed.name || "Untitled",
           updatedAt: parsed.updatedAt || 0,
           terminalCount: (parsed.terminals || []).length,
@@ -188,16 +247,14 @@ export function renameWorkspace(workspaceId: string, name: string): void {
     return;
   }
 
-  try {
-    const raw = readFileSync(filePath, "utf-8");
-    const parsed = JSON.parse(raw);
-    parsed.name = name;
-    parsed.updatedAt = Date.now();
-    writeFileSync(filePath, JSON.stringify(parsed, null, 2), "utf-8");
-    logger.info(`Workspace renamed: ${workspaceId} -> "${name}"`);
-  } catch (err) {
-    logger.error(`Failed to rename workspace ${workspaceId}:`, err);
-  }
+  // Same read-modify-write hazard as saveWorkspace, on a path the user reaches
+  // with a single click -- so it gets the same atomic write.
+  const raw = readFileSync(filePath, "utf-8");
+  const parsed = JSON.parse(raw);
+  parsed.name = name;
+  parsed.updatedAt = Date.now();
+  writeWorkspaceFile(filePath, parsed);
+  logger.info(`Workspace renamed: ${workspaceId} -> "${name}"`);
 }
 
 /**

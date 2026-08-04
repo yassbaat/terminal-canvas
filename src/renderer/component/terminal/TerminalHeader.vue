@@ -4,9 +4,10 @@ import type { TerminalSession } from "@renderer/type/terminal";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useUIStore } from "@renderer/store/ui";
 import { useWorkspaceStore } from "@renderer/store/workspace";
+import { usePromptStore } from "@renderer/store/prompt";
 import { AGENT_META } from "@renderer/util/agents";
 import { sessionDisplayName } from "@renderer/util/sessionName";
-import { Bell, BellOff, X, Maximize2, PanelLeft } from "lucide-vue-next";
+import { Bell, BellOff, X, Maximize2, PanelLeft, NotebookPen } from "lucide-vue-next";
 
 const props = withDefaults(
   defineProps<{
@@ -16,6 +17,8 @@ const props = withDefaults(
     /** Show the file-explorer toggle, and whether the drawer is currently open. */
     canToggleFiles?: boolean;
     filesOpen?: boolean;
+    /** Whether this terminal's Agent Memory (PromptRail) is currently visible. */
+    memoryVisible?: boolean;
     /**
      * Counter-scale the chrome against the canvas zoom. Off on the Focus stage,
      * which isn't inside the transformed canvas and would otherwise inherit a
@@ -23,7 +26,7 @@ const props = withDefaults(
      */
     scaleWithZoom?: boolean;
   }>(),
-  { canFocus: false, canToggleFiles: false, filesOpen: false, scaleWithZoom: true }
+  { canFocus: false, canToggleFiles: false, filesOpen: false, memoryVisible: false, scaleWithZoom: true }
 );
 
 const emit = defineEmits<{
@@ -33,11 +36,15 @@ const emit = defineEmits<{
   (e: "clear"): void;
   (e: "focus-solo"): void;
   (e: "toggle-files"): void;
+  (e: "toggle-memory"): void;
 }>();
 
 const terminalStore = useTerminalStore();
 const uiStore = useUIStore();
 const workspaceStore = useWorkspaceStore();
+const promptStore = usePromptStore();
+
+const promptCount = computed(() => promptStore.getPromptCount(props.session.id));
 
 const displayName = computed(() => sessionDisplayName(props.session));
 
@@ -76,7 +83,7 @@ const chromeScale = computed(() => {
   return Math.min(1.5, 1 + (1 / zoom - 1) * 0.45);
 });
 
-const iconSize = computed(() => Math.round(13 * chromeScale.value));
+const iconSize = computed(() => Math.round(14 * chromeScale.value));
 const titleSize = computed(() => uiStore.terminalTitleSize * chromeScale.value);
 
 const isRenaming = ref(false);
@@ -184,7 +191,17 @@ function toggleOffDuty() {
       </button>
       <button
         class="header-btn"
-        :class="{ 'header-btn-active': !session.idleDetectionEnabled }"
+        :class="{ 'header-btn-on': memoryVisible }"
+        :title="memoryVisible
+          ? 'Hide Agent Memory'
+          : `Show Agent Memory (${promptCount} ${promptCount === 1 ? 'entry' : 'entries'})`"
+        @click.stop="emit('toggle-memory')"
+      >
+        <NotebookPen :size="iconSize" />
+      </button>
+      <button
+        class="header-btn"
+        :class="{ 'header-btn-off-duty': !session.idleDetectionEnabled }"
         :title="session.idleDetectionEnabled
           ? 'On duty — will flag when idle or it rings the bell'
           : 'Off duty — idle/bell attention is disabled for this terminal'"
@@ -329,8 +346,8 @@ function toggleOffDuty() {
   color: var(--tc-accent);
 }
 
-.header-btn-active {
-  color: var(--tc-warning);
+.header-btn-off-duty {
+  color: var(--tc-attention);
   opacity: 0.85;
 }
 

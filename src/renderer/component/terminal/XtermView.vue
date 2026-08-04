@@ -4,7 +4,6 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useUIStore } from "@renderer/store/ui";
-import { useWorkspaceStore } from "@renderer/store/workspace";
 
 const props = defineProps<{
   terminalId: string;
@@ -20,40 +19,44 @@ const emit = defineEmits<{
 const terminalContainer = ref<HTMLDivElement | null>(null);
 const terminalStore = useTerminalStore();
 const uiStore = useUIStore();
-const workspaceStore = useWorkspaceStore();
 
 // The terminal itself stays dark in both app themes (ANSI palettes are
 // tuned for a dark ground, and every terminal app keeps this convention) --
 // only the exact shade shifts a little so it still feels integrated with a
 // light UI, matching --tc-terminal-bg in variables.css.
+// Same hue plan as variables.css: hue 43 (warm black) for the ground and
+// ANSI black/white, hue 218 (brand blue) for cursor/ANSI blue, and the same
+// success/warning/error/info hues for green/yellow/red/cyan so a terminal's
+// actual output colors feel like part of the same product, not a
+// stock xterm.js default theme.
 const DARK_XTERM_THEME: ITheme = {
-  background: "#0d0d1a",
-  foreground: "#e0e0e0",
-  cursor: "#e94560",
-  selectionBackground: "#4a4a6a",
-  black: "#1a1a2e",
-  red: "#e94560",
-  green: "#4ecca3",
-  yellow: "#f9a825",
-  blue: "#64b5f6",
-  magenta: "#e040fb",
-  cyan: "#4dd0e1",
-  white: "#e0e0e0",
-  brightBlack: "#4a4a6a",
-  brightRed: "#ff6b81",
-  brightGreen: "#7ee8c7",
-  brightYellow: "#ffd54f",
-  brightBlue: "#90caf9",
-  brightMagenta: "#ea80fc",
-  brightCyan: "#80deea",
-  brightWhite: "#ffffff",
+  background: "hsl(43, 28%, 5%)",
+  foreground: "hsl(40, 15%, 90%)",
+  cursor: "hsl(218, 94%, 51%)",
+  selectionBackground: "hsl(218, 30%, 30%)",
+  black: "hsl(40, 14%, 14%)",
+  red: "hsl(356, 82%, 59%)",
+  green: "hsl(152, 62%, 45%)",
+  yellow: "hsl(38, 92%, 56%)",
+  blue: "hsl(218, 94%, 51%)",
+  magenta: "hsl(300, 70%, 65%)",
+  cyan: "hsl(190, 75%, 58%)",
+  white: "hsl(40, 12%, 82%)",
+  brightBlack: "hsl(38, 9%, 40%)",
+  brightRed: "hsl(356, 90%, 68%)",
+  brightGreen: "hsl(152, 65%, 58%)",
+  brightYellow: "hsl(42, 95%, 66%)",
+  brightBlue: "hsl(212, 95%, 68%)",
+  brightMagenta: "hsl(300, 80%, 75%)",
+  brightCyan: "hsl(190, 80%, 70%)",
+  brightWhite: "hsl(40, 20%, 96%)",
 };
 const LIGHT_XTERM_THEME: ITheme = {
   ...DARK_XTERM_THEME,
-  background: "#12121c",
-  foreground: "#e4e2ee",
-  cursor: "#d1264a",
-  selectionBackground: "#3f3d58",
+  background: "hsl(43, 24%, 8%)",
+  foreground: "hsl(40, 14%, 92%)",
+  cursor: "hsl(221, 88%, 58%)",
+  selectionBackground: "hsl(218, 25%, 34%)",
 };
 function xtermThemeFor(theme: "light" | "dark"): ITheme {
   return theme === "light" ? LIGHT_XTERM_THEME : DARK_XTERM_THEME;
@@ -112,27 +115,49 @@ let scrollPinTargets: HTMLElement[] = [];
 const POINTER_HITTEST_EVENTS = ["mousedown", "mousemove", "mouseup", "click", "dblclick", "contextmenu", "auxclick"] as const;
 
 /**
+ * How much CSS scaling this terminal is actually being rendered under, measured
+ * from the element itself: getBoundingClientRect() reflects every ancestor
+ * transform, offsetWidth reflects none, so their ratio is the live scale.
+ *
+ * Measured rather than read from the canvas viewport, because the same
+ * XtermView also mounts on the Focus stage, which is a plain overlay outside
+ * Vue Flow's transformed pane. Reading the store's zoom there applied a
+ * correction for a transform that isn't in effect -- at 0.5 canvas zoom every
+ * click landed at twice its real offset, i.e. "selection starts far down the
+ * buffer instead of where the cursor is."
+ */
+function renderedScale(el: HTMLElement): number {
+  const rect = el.getBoundingClientRect();
+  if (!el.offsetWidth || !rect.width) return 1;
+  return rect.width / el.offsetWidth;
+}
+
+/**
  * xterm.js measures its character-cell size once via canvas text metrics or
  * a hidden DOM span's offsetWidth (see @xterm/xterm's CharSizeService) --
  * both are inherently zoom-invariant, since neither reads
  * getBoundingClientRect(). But turning a click into a column/row divides by
  * that fixed cell size using (event.clientX - rect.left), and THAT
- * numerator, being getBoundingClientRect()-based, DOES reflect Vue Flow's
- * current canvas zoom (a CSS transform: scale() on an ancestor pane).
- * Dividing a zoom-scaled pixel offset by a zoom-invariant cell width is
- * wrong by exactly the zoom factor -- e.g. at 50% zoom, every click
- * resolves to half the column it should, which is exactly "selection starts
- * far from where I pressed." Rewriting clientX/clientY here (capture
- * phase, so this runs before xterm's own listeners on its inner elements
- * see the event) to what they'd be at 100% zoom fixes this without
- * touching xterm's internals or its own (correct, stable) cols/rows.
+ * numerator, being getBoundingClientRect()-based, DOES reflect any CSS
+ * transform: scale() on an ancestor (Vue Flow's canvas pane at zoom != 1).
+ * Dividing a scaled pixel offset by an unscaled cell width is wrong by
+ * exactly the scale factor -- e.g. at 50% zoom, every click resolves to half
+ * the column it should, which is exactly "selection starts far from where I
+ * pressed." Rewriting clientX/clientY here (capture phase, so this runs
+ * before xterm's own listeners on its inner elements see the event) to what
+ * they'd be unscaled fixes this without touching xterm's internals or its
+ * own (correct, stable) cols/rows.
  */
 function correctPointerEventForZoom(event: MouseEvent): void {
-  const zoom = workspaceStore.viewport.zoom;
-  if (!zoom || zoom === 1 || !terminalContainer.value) return;
-  const rect = terminalContainer.value.getBoundingClientRect();
-  const correctedX = rect.left + (event.clientX - rect.left) / zoom;
-  const correctedY = rect.top + (event.clientY - rect.top) / zoom;
+  const el = terminalContainer.value;
+  if (!el) return;
+  const scale = renderedScale(el);
+  // offsetWidth is integer-rounded, so an unscaled element measures a hair off
+  // 1 rather than exactly 1 -- anything inside this band is "no transform".
+  if (Math.abs(scale - 1) < 0.01) return;
+  const rect = el.getBoundingClientRect();
+  const correctedX = rect.left + (event.clientX - rect.left) / scale;
+  const correctedY = rect.top + (event.clientY - rect.top) / scale;
   Object.defineProperty(event, "clientX", { value: correctedX, configurable: true });
   Object.defineProperty(event, "clientY", { value: correctedY, configurable: true });
 }
@@ -173,6 +198,17 @@ onMounted(async () => {
   xterm.attachCustomWheelEventHandler((e: WheelEvent) => {
     if (e.ctrlKey) return false;
     return terminalStore.focusedTerminalId === props.terminalId;
+  });
+
+  // Cmd+P / Cmd+F belong to the app (project search), not to the terminal:
+  // returning false stops xterm from consuming them and writing them to the
+  // PTY, and the event still reaches App.vue's window handler. Deliberately
+  // limited to the Cmd modifier -- Ctrl+P and Ctrl+F are shell history and
+  // cursor movement, and swallowing those would break every TUI running here.
+  xterm.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+    if (e.type !== "keydown") return true;
+    if (!e.metaKey || e.ctrlKey || e.altKey) return true;
+    return !(e.key === "p" || e.key === "f");
   });
 
   // Mount to DOM

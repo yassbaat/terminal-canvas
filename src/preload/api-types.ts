@@ -20,6 +20,8 @@ import type {
   FileStatResult,
   FileChangedEvent,
   WatchKind,
+  FileSearchMode,
+  FileSearchResult,
 } from "@renderer/type/file";
 
 export interface TerminalAPI {
@@ -74,6 +76,9 @@ export interface GroqAPI {
   summarizeCommand(text: string): Promise<string>;
   getSettings(): Promise<GroqSettings>;
   updateSettings(settings: GroqSettings): Promise<void>;
+  /** Forget the stored API key. Saving a blank field does NOT clear it -- an
+   *  empty apiKey means "unchanged" so onboarding can't wipe GROQ_API_KEY. */
+  clearApiKey(): Promise<void>;
   testConnection(): Promise<{ success: boolean; message: string }>;
 }
 
@@ -92,6 +97,26 @@ export interface DialogAPI {
     buttonLabel?: string;
     properties?: Array<"openFile" | "openDirectory" | "multiSelections">;
   }): Promise<{ canceled: boolean; filePaths: string[] }>;
+  showMessageBox(options: {
+    type?: "none" | "info" | "error" | "question" | "warning";
+    title?: string;
+    message: string;
+    detail?: string;
+    buttons: string[];
+    defaultId?: number;
+    cancelId?: number;
+  }): Promise<{ response: number }>;
+}
+
+/**
+ * App lifecycle: the save-on-close handshake. Main intercepts the window
+ * close, fires onCloseRequested, and waits; the renderer either lets the
+ * close proceed (confirmClose) or cancels it (cancelClose).
+ */
+export interface AppAPI {
+  onCloseRequested(callback: () => void): () => void;
+  confirmClose(): void;
+  cancelClose(): void;
 }
 
 /**
@@ -123,6 +148,14 @@ export interface FileAPI {
   addRoot(path: string): Promise<string>;
   listRoots(): Promise<string[]>;
   homeDir(): Promise<string>;
+  /**
+   * Search every open project folder by file name or by file contents. Scope is
+   * the main process's allowlist, not a path from here. Results come back
+   * capped -- see `truncated` -- and a call superseded by a newer one resolves
+   * with `superseded: true` and no hits, which the caller should ignore rather
+   * than render.
+   */
+  search(query: string, mode: FileSearchMode, limit?: number): Promise<FileSearchResult>;
   onChanged(callback: (event: FileChangedEvent) => void): () => void;
 }
 
@@ -135,6 +168,7 @@ export interface PreloadAPI {
   shell: ShellAPI;
   dialog: DialogAPI;
   file: FileAPI;
+  app: AppAPI;
 }
 
 declare global {

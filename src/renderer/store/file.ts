@@ -1,4 +1,5 @@
-import { defineStore } from "pinia";
+import { acceptHMRUpdate, defineStore } from "pinia";
+import { useUIStore } from "@renderer/store/ui";
 import { ref, computed } from "vue";
 import type { OpenFileState } from "@renderer/type/file";
 import { getBasename } from "@renderer/util/path";
@@ -25,6 +26,13 @@ export const useFileStore = defineStore("file", () => {
   const tabsByTerminal = ref<Map<string, string[]>>(new Map());
   /** Which tab each terminal is showing; null means the terminal itself. */
   const activeTabByTerminal = ref<Map<string, string | null>>(new Map());
+  /**
+   * Tabs the user has marked, per terminal. Distinct from the *active* tab:
+   * marking is a multi-select that says "these files, specifically" to whatever
+   * acts on the terminal next -- today that's Option-drag duplication, which
+   * carries the marked tabs into the copy and nothing else.
+   */
+  const markedTabsByTerminal = ref<Map<string, Set<string>>>(new Map());
 
   let disposeWatchListener: (() => void) | null = null;
 
@@ -40,6 +48,35 @@ export const useFileStore = defineStore("file", () => {
   const getActiveTab = computed(
     () => (terminalId: string) => activeTabByTerminal.value.get(terminalId) ?? null
   );
+
+  const isTabMarked = computed(
+    () => (terminalId: string, path: string) =>
+      markedTabsByTerminal.value.get(terminalId)?.has(path) ?? false
+  );
+
+  /** Marked tabs in tab order, so a copy opens them the way they were arranged. */
+  const getMarkedTabs = computed(() => (terminalId: string) => {
+    const marked = markedTabsByTerminal.value.get(terminalId);
+    if (!marked || marked.size === 0) return [];
+    return (tabsByTerminal.value.get(terminalId) ?? []).filter((p) => marked.has(p));
+  });
+
+  function toggleTabMark(terminalId: string, path: string): void {
+    const next = new Map(markedTabsByTerminal.value);
+    const marked = new Set(next.get(terminalId) ?? []);
+    if (marked.has(path)) marked.delete(path);
+    else marked.add(path);
+    if (marked.size === 0) next.delete(terminalId);
+    else next.set(terminalId, marked);
+    markedTabsByTerminal.value = next;
+  }
+
+  function clearTabMarks(terminalId: string): void {
+    if (!markedTabsByTerminal.value.has(terminalId)) return;
+    const next = new Map(markedTabsByTerminal.value);
+    next.delete(terminalId);
+    markedTabsByTerminal.value = next;
+  }
 
   const dirtyPaths = computed(() =>
     [...files.value.values()].filter((f) => !f.binary && f.draft !== f.content).map((f) => f.path)
@@ -161,10 +198,18 @@ export const useFileStore = defineStore("file", () => {
       return { ok: false, conflict: false };
     }
 
+    // Snapshot what we're actually writing. The write is a full IPC round trip
+    // (stat + write + rename + stat), so anything typed while it is in flight
+    // lands in `draft` afterwards. Marking the buffer clean against the *new*
+    // draft claimed those keystrokes were saved when they never left the
+    // renderer -- and cleared the "Unsaved" marker, the tab-close confirm and
+    // the quit guard along with them.
+    const pending = entry.draft;
+
     try {
       const result = await window.api.file.write(
         path,
-        entry.draft,
+        pending,
         force ? undefined : entry.mtimeMs
       );
       const current = files.value.get(path);
@@ -176,7 +221,9 @@ export const useFileStore = defineStore("file", () => {
         return { ok: false, conflict: true };
       }
 
-      current.content = current.draft;
+      // Compared against the snapshot, so a buffer that moved on mid-write
+      // correctly stays dirty.
+      current.content = pending;
       current.mtimeMs = result.mtimeMs;
       current.externalChange = false;
       current.error = null;
@@ -223,6 +270,11 @@ export const useFileStore = defineStore("file", () => {
       // Fall back to the neighbour that took this tab's place, then the one
       // before it, then the terminal itself -- same as every tabbed editor.
       setActiveTab(terminalId, next[index] ?? next[index - 1] ?? null);
+    }
+    // A mark on a tab that no longer exists would silently ride along into the
+    // next duplicate.
+    if (markedTabsByTerminal.value.get(terminalId)?.has(path)) {
+      toggleTabMark(terminalId, path);
     }
     close(path);
     persistTabs(terminalId);
@@ -287,6 +339,54 @@ export const useFileStore = defineStore("file", () => {
   }
 
   /** Drop every tab for a terminal that's going away. */
+  /** Paths with unsaved edits among a single terminal's open tabs. */
+  function dirtyPathsForTerminal(terminalId: string): string[] {
+    const tabs = tabsByTerminal.value.get(terminalId) ?? [];
+    return tabs.filter((p) => isDirty.value(p));
+  }
+
+  /**
+   * Ask before throwing away unsaved edits. Returns false if the caller should
+   * abandon whatever it was about to do.
+   *
+   * Every path that tears a terminal down eventually calls clearForTerminal,
+   * which drops buffers unconditionally -- so the guard has to sit in front of
+   * those calls, not inside the store's own bookkeeping. A save can come back
+   * with `conflict` when the file changed on disk underneath us (routine when
+   * an agent is editing the same file); closing anyway after promising to save
+   * would discard exactly what the prompt offered to keep.
+   */
+  async function confirmDiscard(paths: string[]): Promise<boolean> {
+    if (paths.length === 0) return true;
+
+    const { response } = await window.api.dialog.showMessageBox({
+      type: "question",
+      message:
+        paths.length === 1
+          ? "You have 1 file with unsaved changes."
+          : `You have ${paths.length} files with unsaved changes.`,
+      detail: paths.map((p) => p.split(/[\\/]/).pop()).join(", "),
+      buttons: ["Save All", "Discard Changes", "Cancel"],
+      defaultId: 0,
+      cancelId: 2,
+    });
+
+    if (response === 2) return false;
+    if (response === 1) return true;
+
+    const results = await Promise.all(paths.map((p) => save(p)));
+    const failed = results.filter((r) => !r.ok).length;
+    if (failed > 0) {
+      useUIStore().showToast(
+        failed === 1
+          ? "A file changed on disk and couldn't be saved — resolve it first"
+          : `${failed} files changed on disk and couldn't be saved — resolve them first`
+      );
+      return false;
+    }
+    return true;
+  }
+
   function clearForTerminal(terminalId: string): void {
     const tabs = tabsByTerminal.value.get(terminalId) ?? [];
     for (const path of tabs) close(path);
@@ -294,6 +394,7 @@ export const useFileStore = defineStore("file", () => {
     tabsByTerminal.value = new Map(tabsByTerminal.value);
     activeTabByTerminal.value.delete(terminalId);
     activeTabByTerminal.value = new Map(activeTabByTerminal.value);
+    clearTabMarks(terminalId);
   }
 
   // ─── Watching ────────────────────────────────────────────────────
@@ -343,6 +444,10 @@ export const useFileStore = defineStore("file", () => {
     dirtyPaths,
     getTabs,
     getActiveTab,
+    isTabMarked,
+    getMarkedTabs,
+    toggleTabMark,
+    clearTabMarks,
     open,
     close,
     setDraft,
@@ -355,7 +460,19 @@ export const useFileStore = defineStore("file", () => {
     moveTab,
     restoreTabs,
     clearForTerminal,
+    dirtyPathsForTerminal,
+    confirmDiscard,
     setupListeners,
     displayName,
   };
 });
+
+// Pinia caches store instances by id, so a hot-swapped store module would
+// otherwise leave every component bound to the instance built from the *old*
+// code -- newly added state and getters simply wouldn't exist on it, and the
+// symptom is a component rendering as if half its data vanished. This patches
+// the live instance instead. Dev only: `import.meta.hot` is undefined in a
+// production build, so the block drops out.
+if (import.meta.hot) {
+  import.meta.hot.accept(acceptHMRUpdate(useFileStore, import.meta.hot));
+}

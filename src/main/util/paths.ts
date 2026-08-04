@@ -22,7 +22,26 @@ export function getWorkspacesDir(): string {
   return dir;
 }
 
+/**
+ * Workspace ids are interpolated straight into a filesystem path, and the id
+ * is read back out of a JSON file on disk -- so a hand-edited or shared
+ * workspace file could otherwise point save/rename/delete at an arbitrary
+ * `.json` anywhere on the machine.
+ *
+ * Both generators in the app produce ids that satisfy this: main emits
+ * `<base36ts>-<6rand>-<counter>` and the renderer emits
+ * `ws_<base36ts>_<counter>_<4rand>`.
+ */
+const WORKSPACE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+export function isValidWorkspaceId(workspaceId: string): boolean {
+  return WORKSPACE_ID_PATTERN.test(workspaceId);
+}
+
 export function getWorkspaceFilePath(workspaceId: string): string {
+  if (!isValidWorkspaceId(workspaceId)) {
+    throw new Error(`Invalid workspace id: ${workspaceId}`);
+  }
   return path.join(getWorkspacesDir(), `${workspaceId}.json`);
 }
 

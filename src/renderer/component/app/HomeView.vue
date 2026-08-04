@@ -33,7 +33,10 @@ async function openWorkspace(id: string): Promise<void> {
 }
 
 async function createWorkspace(): Promise<void> {
-  workspaceStore.createNewWorkspace();
+  // Awaited: the new workspace has to be empty before the canvas is shown,
+  // otherwise it renders the previous workspace's still-running terminals.
+  // Null means the user cancelled at the unsaved-files prompt -- stay put.
+  if (!(await workspaceStore.createNewWorkspace())) return;
   uiStore.hideHome();
 }
 
@@ -142,7 +145,13 @@ function cancelRename(): void {
   align-items: flex-start;
   justify-content: center;
   overflow-y: auto;
-  background: var(--tc-bg-primary);
+  /* Hero glow for a bit of designed warmth, plus a faint dot grid that
+     echoes the canvas's own background (WorkspaceCanvas.vue) so this screen
+     reads as the same app rather than a separate settings-style page. */
+  background-image: var(--tc-hero-glow), radial-gradient(circle, hsla(40, 20%, 60%, 0.08) 1px, transparent 1.6px);
+  background-size: auto, 22px 22px;
+  background-repeat: no-repeat, repeat;
+  background-color: var(--tc-bg-primary);
   padding: 64px 24px;
 }
 
@@ -183,11 +192,17 @@ function cancelRename(): void {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   padding: 80px 20px;
   color: var(--tc-text-muted);
-  border: 1px dashed var(--tc-border-color);
-  border-radius: var(--tc-border-radius);
+  background: var(--tc-hero-glow), var(--tc-bg-card);
+  background-repeat: no-repeat;
+  border: 1px solid var(--tc-border-color);
+  border-radius: calc(var(--tc-border-radius) * 1.5);
+}
+
+.home-empty svg {
+  color: var(--tc-accent);
 }
 
 .workspace-grid {

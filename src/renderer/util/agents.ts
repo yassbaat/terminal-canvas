@@ -1,4 +1,13 @@
-import { Sparkles, Cpu, Moon, Gem, Wrench, MousePointer2, Github, type LucideIcon } from "lucide-vue-next";
+import type { Component } from "vue";
+import { Wrench } from "lucide-vue-next";
+import {
+  ClaudeMark,
+  OpenAIMark,
+  GeminiMark,
+  KimiMark,
+  CursorMark,
+  CopilotMark,
+} from "@renderer/component/icon/brand-icons";
 
 export type KnownAgentId =
   | "claude"
@@ -11,24 +20,32 @@ export type KnownAgentId =
 
 export interface AgentMeta {
   label: string;
-  /** Vue icon component (not a trademarked logo image) -- enough to give
-   * each agent a distinct, glanceable identity without bundling
-   * third-party brand assets. */
-  icon: LucideIcon;
+  /** The provider's own mark, so a running agent is identifiable at a glance
+   * rather than by a stand-in glyph (see component/icon/brand-icons). Aider
+   * has no published mark in that set and keeps a neutral Lucide icon. */
+  icon: Component;
   color: string;
+  /**
+   * Offered as a one-click choice in the New Terminal dialog. The rest stay
+   * fully supported -- recognized from a typed command, badged, relaunched on
+   * workspace restore, listed in Settings -- they just don't crowd the
+   * create-a-terminal path.
+   */
+  featured: boolean;
 }
 
 /**
  * Known coding-agent CLIs we can recognize from the command a user types.
+ * Declaration order is the order the featured ones are offered in.
  */
 export const AGENT_META: Record<KnownAgentId, AgentMeta> = {
-  claude: { label: "Claude Code", icon: Sparkles, color: "#d97757" },
-  codex: { label: "Codex", icon: Cpu, color: "#10a37f" },
-  kimi: { label: "Kimi", icon: Moon, color: "#7c6cf0" },
-  gemini: { label: "Gemini", icon: Gem, color: "#4a90e2" },
-  aider: { label: "Aider", icon: Wrench, color: "#f2994a" },
-  "cursor-agent": { label: "Cursor", icon: MousePointer2, color: "#6e6e6e" },
-  copilot: { label: "Copilot", icon: Github, color: "#3fb950" },
+  claude: { label: "Claude Code", icon: ClaudeMark, color: "#d97757", featured: true },
+  codex: { label: "Codex", icon: OpenAIMark, color: "#10a37f", featured: true },
+  kimi: { label: "Kimi", icon: KimiMark, color: "#7c6cf0", featured: true },
+  gemini: { label: "Gemini", icon: GeminiMark, color: "#4a90e2", featured: false },
+  aider: { label: "Aider", icon: Wrench, color: "#f2994a", featured: false },
+  "cursor-agent": { label: "Cursor", icon: CursorMark, color: "#8a8aa0", featured: false },
+  copilot: { label: "Copilot", icon: CopilotMark, color: "#3fb950", featured: false },
 };
 
 // Matches the first "word" of a typed command, stripped of a few common
@@ -55,6 +72,23 @@ const AGENT_LAUNCH_TOKENS: Record<string, KnownAgentId> = {
 };
 
 const EXIT_TOKENS = new Set(["exit", "quit", "logout"]);
+
+/**
+ * Command used to bring an agent back when restoring a saved workspace. A live
+ * agent process can't be serialized, so restore re-launches the CLI instead --
+ * using each agent's own "pick up where you left off" flag where one exists
+ * (both claude and codex key resumption off the terminal's cwd, which restore
+ * preserves). Agents without a resume flag just relaunch fresh.
+ */
+export const AGENT_RELAUNCH_COMMANDS: Record<KnownAgentId, string> = {
+  claude: "claude --continue",
+  codex: "codex resume --last",
+  kimi: "kimi",
+  gemini: "gemini",
+  aider: "aider",
+  "cursor-agent": "cursor-agent",
+  copilot: "copilot",
+};
 
 export type AgentDetection =
   | { action: "start"; agent: KnownAgentId }

@@ -97,24 +97,24 @@ onBeforeUnmount(() => {
             title="Save (⌘S)"
             @click.stop="codeView?.save()"
           >
-            <Save :size="12" />
+            <Save :size="13" />
           </button>
           <button
             class="file-node-btn"
             :title="pinnedName ? `Pinned to ${pinnedName} — click to unpin` : 'Not pinned'"
             @click.stop="togglePin"
           >
-            <component :is="pinnedName ? Pin : PinOff" :size="12" />
+            <component :is="pinnedName ? Pin : PinOff" :size="13" />
           </button>
           <button
             class="file-node-btn"
             title="Reveal in file manager"
             @click.stop="reveal"
           >
-            <ExternalLink :size="12" />
+            <ExternalLink :size="13" />
           </button>
           <button class="file-node-btn file-node-btn-close" title="Close" @click.stop="closeNode">
-            <X :size="12" />
+            <X :size="13" />
           </button>
         </div>
       </div>
@@ -140,20 +140,25 @@ onBeforeUnmount(() => {
   height: 100%;
 }
 
+/* Editors carry a cyan (--tc-info) edge, terminals carry none -- so which is
+   which reads at a glance from across the canvas, at any zoom, without a
+   legend. It's the same hue the file's connection line and its minimap dot
+   already use, so the three agree. */
 .file-node-inner {
   display: flex;
   flex-direction: column;
   width: 100%;
   height: 100%;
   background: var(--tc-bg-card);
-  border: 1px solid var(--tc-border-color);
+  border: 1px solid color-mix(in srgb, var(--tc-info) 55%, var(--tc-border-color));
   border-radius: var(--tc-border-radius);
   overflow: hidden;
-  box-shadow: var(--tc-shadow-md);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--tc-info) 18%, transparent),
+    var(--tc-shadow-md);
 }
 
 .file-node.selected .file-node-inner {
-  box-shadow: 0 0 0 2px var(--tc-accent), var(--tc-shadow-lg);
+  box-shadow: 0 0 0 2px var(--tc-info), var(--tc-shadow-lg);
 }
 
 .file-node-header {
@@ -162,7 +167,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 5px 6px 5px 10px;
   background: var(--tc-bg-header);
-  border-bottom: 1px solid var(--tc-border-color);
+  border-bottom: 1px solid color-mix(in srgb, var(--tc-info) 30%, var(--tc-border-color));
   flex-shrink: 0;
   cursor: grab;
 }

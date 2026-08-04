@@ -3,17 +3,15 @@ import { computed, watch, ref, nextTick } from "vue";
 import { useTerminalStore } from "@renderer/store/terminal";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useUIStore } from "@renderer/store/ui";
-import { shortenCwd } from "@renderer/util/path";
-import { AGENT_META } from "@renderer/util/agents";
-import { useVueFlow } from "@vue-flow/core";
-import { Folder, StickyNote, Bell, X, ChevronDown } from "lucide-vue-next";
+import { useFileStore } from "@renderer/store/file";
+import { getBasename } from "@renderer/util/path";
+import LayerTerminalRow from "@renderer/component/app/LayerTerminalRow.vue";
+import { Folder, StickyNote, FileCode2, ChevronDown } from "lucide-vue-next";
 
 const terminalStore = useTerminalStore();
 const workspaceStore = useWorkspaceStore();
 const uiStore = useUIStore();
-// Same shared canvas store instance as WorkspaceCanvas.vue/Toolbar.vue (see
-// their comments on why an explicit id is required here).
-const { setCenter, getViewport } = useVueFlow("canvas");
+const fileStore = useFileStore();
 
 // The list was previously never fetched at all, so this tab always rendered
 // as permanently empty regardless of how many workspaces were actually
@@ -32,22 +30,16 @@ function openWorkspace(id: string): void {
   workspaceStore.switchToWorkspace(id);
 }
 
-/**
- * Double-clicking a terminal in the Layers panel pans/zooms the canvas to
- * center it and focuses it, so browsing the list is also a way to navigate.
- */
-function navigateToTerminal(id: string): void {
-  const session = terminalStore.sessions.get(id);
-  if (!session) return;
-  const width = session.node.width || 760;
-  const height = session.node.height || 480;
-  const centerX = session.node.x + width / 2;
-  const centerY = session.node.y + height / 2;
-  setCenter(centerX, centerY, { zoom: Math.max(getViewport().zoom, 0.75), duration: 400 });
-  terminalStore.setFocused(id);
-}
-
 const sessions = computed(() => terminalStore.allSessions);
+
+/**
+ * Editors that aren't bound to a terminal any more (their session was closed,
+ * or they were explicitly unpinned) sit at the top level of the tree -- they
+ * are still canvas objects and still need a row.
+ */
+const unpinnedFiles = computed(() =>
+  workspaceStore.fileNodes.filter((f) => !f.pinnedToTerminalId)
+);
 
 const activeTab = computed({
   get: () => uiStore.sidebarTab,
@@ -55,10 +47,15 @@ const activeTab = computed({
 });
 
 /**
- * Total count of all layer items (groups + terminals + notes).
+ * Total count of all layer items (groups + terminals + editors + notes).
  */
 const layerCount = computed(() => {
-  return workspaceStore.groups.length + sessions.value.length + workspaceStore.stickyNotes.length;
+  return (
+    workspaceStore.groups.length +
+    sessions.value.length +
+    workspaceStore.fileNodes.length +
+    workspaceStore.stickyNotes.length
+  );
 });
 
 /**
@@ -68,11 +65,6 @@ const ungroupedSessions = computed(() =>
   sessions.value.filter((s) => s.groupId === null)
 );
 
-async function killTerminal(id: string) {
-  await terminalStore.killSession(id);
-  terminalStore.removeSession(id);
-}
-
 /** Hovering a layer row highlights the matching node on the minimap so the
  * user can see where it lives on the canvas. */
 function onLayerEnter(id: string): void {
@@ -80,12 +72,6 @@ function onLayerEnter(id: string): void {
 }
 function onLayerLeave(id: string): void {
   if (uiStore.hoveredLayerId === id) uiStore.setHoveredLayer(null);
-}
-
-/** True when a terminal is being hovered on the canvas (drives a subtle Layers
- * highlight, distinct from the selection colour). */
-function isCanvasHovered(id: string): boolean {
-  return uiStore.hoveredTerminalId === id;
 }
 
 // Keep the focused/navigated terminal visible in the Layers list -- stepping
@@ -103,10 +89,6 @@ watch(
   }
 );
 
-function isTerminalSelected(id: string): boolean {
-  return terminalStore.selectedTerminalIds.has(id);
-}
-
 function isNoteSelected(id: string): boolean {
   return workspaceStore.selectedNoteIds.has(id);
 }
@@ -121,32 +103,20 @@ function isGroupSelected(id: string): boolean {
  * Ctrl/Cmd+click = toggle selection (multi-select).
  */
 function handleLayerClick(
-  type: "terminal" | "note" | "group",
+  type: "note" | "group" | "file",
   id: string,
   event: MouseEvent
 ): void {
   const isMulti = event.ctrlKey || event.metaKey || event.shiftKey;
 
-  if (type === "terminal") {
-    if (isMulti) {
-      terminalStore.toggleSelected(id);
-    } else {
-      terminalStore.setSelected([id]);
-      workspaceStore.clearNoteSelection();
-      workspaceStore.clearGroupSelection();
-    }
-    // Note: deliberately NOT calling terminalStore.setFocused(id) here.
-    // Selecting a terminal from the Layers list is for highlighting/grouping
-    // (e.g. select several, then Ctrl+G / Shift+click) -- it must not steal
-    // keyboard focus into that terminal, which would silently disable canvas
-    // shortcuts.
-  } else if (type === "note") {
+  if (type === "note") {
     if (isMulti) {
       workspaceStore.toggleNoteSelected(id);
     } else {
       workspaceStore.setNoteSelected([id]);
       terminalStore.clearSelection();
       workspaceStore.clearGroupSelection();
+      workspaceStore.clearFileSelection();
     }
   } else if (type === "group") {
     if (isMulti) {
@@ -155,6 +125,16 @@ function handleLayerClick(
       workspaceStore.setGroupSelected([id]);
       terminalStore.clearSelection();
       workspaceStore.clearNoteSelection();
+      workspaceStore.clearFileSelection();
+    }
+  } else if (type === "file") {
+    if (isMulti) {
+      workspaceStore.toggleFileSelected(id);
+    } else {
+      workspaceStore.setFileSelected([id]);
+      terminalStore.clearSelection();
+      workspaceStore.clearNoteSelection();
+      workspaceStore.clearGroupSelection();
     }
   }
 }
@@ -197,83 +177,49 @@ function handleLayerClick(
         </div>
 
         <!-- Groups -->
-        <div
-          v-for="group in workspaceStore.groups"
-          :key="group.id"
-          class="layer-item group-layer"
-          :class="{ selected: isGroupSelected(group.id) }"
-          @click="handleLayerClick('group', group.id, $event)"
-          @mouseenter="onLayerEnter(group.id)"
-          @mouseleave="onLayerLeave(group.id)"
-        >
-          <div class="layer-row">
-            <Folder class="layer-icon" :size="12" />
-            <span class="layer-name" :title="group.name">{{ group.name }}</span>
-            <span class="layer-count">{{ group.terminalIds.length }}</span>
-          </div>
-          <!-- Terminals inside group -->
+        <div v-for="group in workspaceStore.groups" :key="group.id" class="layer-branch">
           <div
-            v-for="tid in group.terminalIds"
-            :key="tid"
-            class="layer-item terminal-layer nested"
-            :class="{ selected: isTerminalSelected(tid), 'canvas-hovered': isCanvasHovered(tid) }"
-            :data-layer-terminal="tid"
-            @click.stop="handleLayerClick('terminal', tid, $event)"
-            @dblclick.stop="navigateToTerminal(tid)"
-            @mouseenter="onLayerEnter(tid)"
-            @mouseleave="onLayerLeave(tid)"
+            class="layer-item group-layer"
+            :class="{ selected: isGroupSelected(group.id) }"
+            @click="handleLayerClick('group', group.id, $event)"
+            @mouseenter="onLayerEnter(group.id)"
+            @mouseleave="onLayerLeave(group.id)"
           >
             <div class="layer-row">
-              <span class="layer-status-dot" :class="terminalStore.sessions.get(tid)?.status" />
-              <component
-                :is="AGENT_META[terminalStore.sessions.get(tid)!.activeAgent!].icon"
-                v-if="terminalStore.sessions.get(tid)?.activeAgent"
-                class="layer-agent-glyph"
-                :size="11"
-                :style="{ color: AGENT_META[terminalStore.sessions.get(tid)!.activeAgent!].color }"
-                :title="AGENT_META[terminalStore.sessions.get(tid)!.activeAgent!].label"
-              />
-              <span class="layer-name">{{ terminalStore.sessions.get(tid)?.name ?? tid }}</span>
-              <Bell v-if="terminalStore.sessions.get(tid)?.needsAttention" class="layer-attention" :size="11" title="Needs attention" />
+              <span class="layer-twisty-spacer" />
+              <Folder class="layer-icon" :size="12" />
+              <span class="layer-name" :title="group.name">{{ group.name }}</span>
+              <span class="layer-badge">{{ group.terminalIds.length }}</span>
             </div>
+          </div>
+          <!-- Terminals inside group (each with its own editors under it) -->
+          <div class="layer-children">
+            <LayerTerminalRow v-for="tid in group.terminalIds" :key="tid" :terminal-id="tid" nested />
           </div>
         </div>
 
-        <!-- Ungrouped terminals -->
-        <div
+        <!-- Ungrouped terminals, each expanding to the editors dragged out of it -->
+        <LayerTerminalRow
           v-for="session in ungroupedSessions"
           :key="session.id"
-          class="layer-item terminal-layer"
-          :class="{
-            selected: isTerminalSelected(session.id),
-            'canvas-hovered': isCanvasHovered(session.id),
-            exited: session.status === 'exited' || session.status === 'crashed'
-          }"
-          :data-layer-terminal="session.id"
-          @click="handleLayerClick('terminal', session.id, $event)"
-          @dblclick="navigateToTerminal(session.id)"
-          @mouseenter="onLayerEnter(session.id)"
-          @mouseleave="onLayerLeave(session.id)"
+          :terminal-id="session.id"
+        />
+
+        <!-- Editors no longer bound to a terminal -->
+        <div
+          v-for="file in unpinnedFiles"
+          :key="file.id"
+          class="layer-item file-layer"
+          :class="{ selected: workspaceStore.selectedFileIds.has(file.id) }"
+          @click="handleLayerClick('file', file.id, $event)"
+          @mouseenter="onLayerEnter(file.id)"
+          @mouseleave="onLayerLeave(file.id)"
         >
           <div class="layer-row">
-            <span class="layer-status-dot" :class="`status-${session.status}`" />
-            <component
-              :is="AGENT_META[session.activeAgent].icon"
-              v-if="session.activeAgent"
-              class="layer-agent-glyph"
-              :size="11"
-              :style="{ color: AGENT_META[session.activeAgent].color }"
-              :title="AGENT_META[session.activeAgent].label"
-            />
-            <span class="layer-name">{{ session.name }}</span>
-            <Bell v-if="session.needsAttention" class="layer-attention" :size="11" title="Needs attention" />
-            <button class="layer-kill" @click.stop="killTerminal(session.id)" title="Kill">
-              <X :size="12" />
-            </button>
-          </div>
-          <div class="layer-meta">
-            <span v-if="uiStore.showShellType" class="layer-shell">{{ session.shellName }}</span>
-            <span class="layer-cwd" :title="session.cwd">{{ shortenCwd(session.cwd, 20) }}</span>
+            <span class="layer-twisty-spacer" />
+            <FileCode2 class="layer-icon layer-file-icon" :size="12" />
+            <span class="layer-name" :title="file.path">{{ getBasename(file.path) }}</span>
+            <span v-if="fileStore.isDirty(file.path)" class="layer-dirty" title="Unsaved changes" />
           </div>
         </div>
 
@@ -288,6 +234,7 @@ function handleLayerClick(
           @mouseleave="onLayerLeave(note.id)"
         >
           <div class="layer-row">
+            <span class="layer-twisty-spacer" />
             <StickyNote class="layer-icon" :size="12" />
             <span class="layer-name">{{ note.text ? note.text.split('\n')[0].slice(0, 30) : 'Empty note' }}</span>
           </div>
@@ -415,65 +362,135 @@ function handleLayerClick(
   opacity: 0.6;
 }
 
-/* Layer items */
-.layer-item {
-  padding: 6px 8px;
+/* ─── Layers tree ──────────────────────────────────────────────────
+   An object list in the Figma mould: single-line rows, no per-row border or
+   card, one twisty column so every row's name starts at the same x whether or
+   not it has children, and an indent guide down each nesting level. Everything
+   secondary (path, actions) is hover-only, so at rest the panel is a clean
+   column of names. Styled from here with :deep() rather than inside
+   LayerTerminalRow.vue so a row looks identical wherever it's rendered. */
+.tab-panel :deep(.layer-branch) {
+  display: flex;
+  flex-direction: column;
+}
+
+.tab-panel :deep(.layer-item) {
+  padding: 0 6px;
   border-radius: var(--tc-border-radius-sm);
   cursor: pointer;
-  transition: all var(--tc-transition-fast);
-  border: 1px solid transparent;
+  transition: background var(--tc-transition-fast), box-shadow var(--tc-transition-fast);
   user-select: none;
 }
 
-.layer-item:hover {
+.tab-panel :deep(.layer-item:hover) {
   background: var(--tc-bg-hover);
-  border-color: var(--tc-border-color);
 }
 
-.layer-item.selected {
+/* Selection is a filled row, not an outlined one -- an outline on a 24px row
+   reads as a box around the text rather than "this is selected". */
+.tab-panel :deep(.layer-item.selected) {
   background: var(--tc-accent-soft);
-  border-color: var(--tc-accent);
+  box-shadow: inset 2px 0 0 var(--tc-accent);
+}
+
+.tab-panel :deep(.layer-item.selected .layer-name) {
+  color: var(--tc-accent);
 }
 
 /* Subtle highlight for a terminal currently hovered on the canvas -- a neutral
    tint + grey edge bar, deliberately NOT the accent colour used for selection,
    so the two states stay distinguishable at a glance. */
-.layer-item.canvas-hovered:not(.selected) {
+.tab-panel :deep(.layer-item.canvas-hovered:not(.selected)) {
   background: var(--tc-bg-hover);
-  border-color: var(--tc-border-color);
-  box-shadow: inset 3px 0 0 var(--tc-text-muted);
+  box-shadow: inset 2px 0 0 var(--tc-text-muted);
 }
 
-.layer-row {
+.tab-panel :deep(.layer-row) {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 20px;
+  height: 24px;
 }
 
-.layer-icon {
-  font-size: 12px;
+/* Children hang off an indent guide, so a deep tree still reads as a tree at a
+   glance rather than as rows that happen to be pushed right. */
+.tab-panel :deep(.layer-children) {
+  margin-left: 12px;
+  padding-left: 6px;
+  border-left: 1px solid var(--tc-border-color);
+}
+
+/* Twisty. The spacer keeps names aligned on rows that have no children. */
+.tab-panel :deep(.layer-twisty),
+.tab-panel :deep(.layer-twisty-spacer) {
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.tab-panel :deep(.layer-twisty) {
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--tc-text-muted);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: transform var(--tc-transition-fast), color var(--tc-transition-fast);
+}
+
+.tab-panel :deep(.layer-twisty:hover) {
+  color: var(--tc-text-primary);
+}
+
+.tab-panel :deep(.layer-twisty.open) {
+  transform: rotate(90deg);
+}
+
+.tab-panel :deep(.layer-icon) {
+  line-height: 1;
+  flex-shrink: 0;
+  color: var(--tc-text-muted);
+}
+
+/* Editors carry the same cyan as their canvas node's outline and their
+   connection line, so a glance at either surface says "this is a file". */
+.tab-panel :deep(.layer-file-icon) {
+  color: var(--tc-info);
+}
+
+.tab-panel :deep(.layer-agent-glyph) {
   line-height: 1;
   flex-shrink: 0;
 }
 
-.layer-agent-glyph {
-  font-size: 11px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.layer-name {
+.tab-panel :deep(.layer-name) {
   font-size: var(--tc-font-size-sm);
   color: var(--tc-text-primary);
   flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   font-weight: 500;
 }
 
-.layer-count {
+/* Child rows read one step quieter than their parent. */
+.tab-panel :deep(.file-layer .layer-name) {
+  font-weight: 400;
+  color: var(--tc-text-secondary);
+}
+
+/* Shell name, when the "Show shell type" setting is on. */
+.tab-panel :deep(.layer-shell) {
+  font-size: var(--tc-font-size-xs);
+  color: var(--tc-text-muted);
+  flex-shrink: 0;
+}
+
+.tab-panel :deep(.layer-badge) {
   font-size: 10px;
   color: var(--tc-text-muted);
   background: var(--tc-bg-secondary);
@@ -482,74 +499,42 @@ function handleLayerClick(
   flex-shrink: 0;
 }
 
-/* Nested terminals inside groups */
-.terminal-layer.nested {
-  margin-left: 12px;
-  padding: 4px 6px;
-  margin-top: 2px;
-}
-
-.terminal-layer.nested .layer-name {
-  font-size: var(--tc-font-size-xs);
-  font-weight: 400;
+/* Unsaved-changes dot on an editor row. */
+.tab-panel :deep(.layer-dirty) {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tc-warning);
+  flex-shrink: 0;
 }
 
 /* Terminal status dot */
-.layer-status-dot {
+.tab-panel :deep(.layer-status-dot) {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
-.layer-status-dot.status-running { background: var(--tc-status-running); }
-.layer-status-dot.status-starting { background: var(--tc-status-starting); }
-.layer-status-dot.status-exited { background: var(--tc-status-exited); }
-.layer-status-dot.status-crashed { background: var(--tc-status-crashed); }
-.layer-status-dot.status-killed { background: var(--tc-status-killed); }
-
-.layer-status-dot.running { background: var(--tc-status-running); }
-.layer-status-dot.starting { background: var(--tc-status-starting); }
-.layer-status-dot.exited { background: var(--tc-status-exited); }
-.layer-status-dot.crashed { background: var(--tc-status-crashed); }
-.layer-status-dot.killed { background: var(--tc-status-killed); }
-
-/* Terminal meta (cwd, shell) */
-.layer-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding-left: 13px;
-  margin-top: 2px;
-}
-
-.layer-shell {
-  font-size: var(--tc-font-size-xs);
-  color: var(--tc-text-muted);
-}
-
-.layer-cwd {
-  font-size: var(--tc-font-size-xs);
-  color: var(--tc-text-muted);
-  font-family: var(--tc-font-mono);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+.tab-panel :deep(.layer-status-dot.status-running) { background: var(--tc-status-running); }
+.tab-panel :deep(.layer-status-dot.status-starting) { background: var(--tc-status-starting); }
+.tab-panel :deep(.layer-status-dot.status-exited) { background: var(--tc-status-exited); }
+.tab-panel :deep(.layer-status-dot.status-crashed) { background: var(--tc-status-crashed); }
+.tab-panel :deep(.layer-status-dot.status-killed) { background: var(--tc-status-killed); }
 
 /* Attention badge (idle/bell notification) */
-.layer-attention {
+.tab-panel :deep(.layer-attention) {
   flex-shrink: 0;
-  color: var(--tc-warning);
+  color: var(--tc-attention);
 }
 
-.layer-item.terminal-layer:has(.layer-attention) {
-  background: var(--tc-warning-soft);
-  border-color: var(--tc-warning);
+.tab-panel :deep(.layer-item.terminal-layer:has(.layer-attention)) {
+  background: var(--tc-attention-soft);
+  box-shadow: inset 2px 0 0 var(--tc-attention);
 }
 
 /* Kill button */
-.layer-kill {
+.tab-panel :deep(.layer-kill) {
   width: 18px;
   height: 18px;
   border: none;
@@ -560,28 +545,28 @@ function handleLayerClick(
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
   line-height: 1;
+  flex-shrink: 0;
   opacity: 0;
   transition: opacity var(--tc-transition-fast);
 }
 
-.layer-item:hover .layer-kill {
+.tab-panel :deep(.layer-item:hover .layer-kill) {
   opacity: 1;
 }
 
-.layer-kill:hover {
+.tab-panel :deep(.layer-kill:hover) {
   background: var(--tc-accent-soft);
   color: var(--tc-error);
 }
 
 /* Exited state */
-.terminal-layer.exited {
+.tab-panel :deep(.terminal-layer.exited) {
   opacity: 0.5;
 }
 
 /* Note layer */
-.note-layer .layer-name {
+.tab-panel :deep(.note-layer .layer-name) {
   font-style: italic;
   opacity: 0.9;
 }

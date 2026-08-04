@@ -1,12 +1,34 @@
-import { ipcMain, BrowserWindow, shell } from "electron";
+import { app, ipcMain, BrowserWindow, shell } from "electron";
 import { terminalManager } from "../terminal/terminal-manager";
 import { createLogger } from "../util/logger";
 
 const logger = createLogger("TerminalIPC");
 
-export function registerTerminalIPC(window: BrowserWindow): void {
+/**
+ * Point terminal events at a window. Split out from handler registration
+ * because a new window can be created more than once per app run (macOS
+ * dock-reopen), while ipcMain.handle throws on a duplicate channel.
+ */
+export function bindTerminalWindow(window: BrowserWindow): void {
   terminalManager.setWindow(window);
 
+  // A renderer reload wipes the store that owned every session, and there is
+  // no re-attach path, so the shells that survive it are invisible and
+  // unkillable from the UI for the rest of the run. Reap them.
+  //
+  // Packaged builds only, and deliberately so: in development Vite triggers a
+  // full page reload for changes it can't hot-patch, and killing a developer's
+  // running agent sessions on every such reload would be worse than the leak.
+  // Packaged builds no longer expose Reload in the menu at all (see
+  // buildApplicationMenu), so this is now only reached by a renderer crash.
+  if (app.isPackaged) {
+    window.webContents.on("did-start-loading", () => {
+      terminalManager.cleanupAll();
+    });
+  }
+}
+
+export function registerTerminalIPC(): void {
   ipcMain.handle("terminal:create", async (_, options) => {
     try {
       logger.debug("IPC: terminal:create", options);

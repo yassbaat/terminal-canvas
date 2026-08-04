@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
-import { X, TerminalSquare, PanelLeftOpen } from "lucide-vue-next";
+import { X, TerminalSquare } from "lucide-vue-next";
 import { useFileStore } from "@renderer/store/file";
 import { getBasename } from "@renderer/util/path";
 
@@ -10,29 +10,31 @@ import { getBasename } from "@renderer/util/path";
  * empty canvas detaches it into its own node -- the drop is handled by
  * WorkspaceCanvas, this just seeds the drag payload.
  */
-const props = withDefaults(
-  defineProps<{
-    terminalId: string;
-    /** Whether the file drawer is currently showing, for the toggle button. */
-    drawerOpen?: boolean;
-    /** Off on the Focus stage, which carries tabs but no file explorer. */
-    showDrawerToggle?: boolean;
-  }>(),
-  { drawerOpen: false, showDrawerToggle: true }
-);
-
-const emit = defineEmits<{
-  (e: "toggle-drawer"): void;
+const props = defineProps<{
+  terminalId: string;
 }>();
 
 const fileStore = useFileStore();
+
+const modKeyLabel = window.api?.platform === "darwin" ? "⌘" : "Ctrl";
 
 const tabs = computed(() => fileStore.getTabs(props.terminalId));
 const activeTab = computed(() => fileStore.getActiveTab(props.terminalId));
 
 const dragIndex = ref<number | null>(null);
 
-function select(path: string | null): void {
+/**
+ * Plain click shows the tab. Cmd/Ctrl-click *marks* it instead -- a separate
+ * multi-select that survives switching tabs and says "carry these files with
+ * you" to whatever acts on the terminal next (today: Option-drag duplication).
+ * Marking deliberately doesn't also activate: picking three files to carry
+ * shouldn't yank the view through all three.
+ */
+function select(path: string | null, event: MouseEvent): void {
+  if (path && (event.metaKey || event.ctrlKey)) {
+    fileStore.toggleTabMark(props.terminalId, path);
+    return;
+  }
   fileStore.setActiveTab(props.terminalId, path);
 }
 
@@ -72,22 +74,12 @@ function handleDragEnd(): void {
 <template>
   <div class="tab-strip nodrag">
     <button
-      v-if="showDrawerToggle"
-      class="tab-drawer-toggle"
-      :class="{ on: drawerOpen }"
-      :title="drawerOpen ? 'Hide file explorer' : 'Show file explorer'"
-      @click.stop="emit('toggle-drawer')"
-    >
-      <PanelLeftOpen :size="13" />
-    </button>
-
-    <button
       class="tab"
       :class="{ active: activeTab === null }"
       title="Terminal"
-      @click.stop="select(null)"
+      @click.stop="select(null, $event)"
     >
-      <TerminalSquare :size="12" />
+      <TerminalSquare :size="13" />
       <span class="tab-label">Terminal</span>
     </button>
 
@@ -95,10 +87,10 @@ function handleDragEnd(): void {
       v-for="(path, index) in tabs"
       :key="path"
       class="tab tab-file"
-      :class="{ active: activeTab === path }"
-      :title="path"
+      :class="{ active: activeTab === path, marked: fileStore.isTabMarked(terminalId, path) }"
+      :title="`${path}\n${modKeyLabel}-click to mark this file to travel with a duplicate`"
       draggable="true"
-      @click.stop="select(path)"
+      @click.stop="select(path, $event)"
       @dragstart="handleDragStart($event, path, index)"
       @dragover="handleDragOver($event, index)"
       @dragend="handleDragEnd"
@@ -106,7 +98,7 @@ function handleDragEnd(): void {
       <span class="tab-label">{{ getBasename(path) }}</span>
       <span v-if="fileStore.isDirty(path)" class="tab-dirty" title="Unsaved changes" />
       <span class="tab-close" title="Close" @click.stop="close(path)">
-        <X :size="11" />
+        <X :size="12" />
       </span>
     </button>
   </div>
@@ -128,23 +120,6 @@ function handleDragEnd(): void {
 
 .tab-strip::-webkit-scrollbar {
   display: none;
-}
-
-.tab-drawer-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  flex-shrink: 0;
-  background: none;
-  border: none;
-  color: var(--tc-text-muted);
-  cursor: pointer;
-}
-
-.tab-drawer-toggle:hover,
-.tab-drawer-toggle.on {
-  color: var(--tc-accent);
 }
 
 .tab {
@@ -171,6 +146,20 @@ function handleDragEnd(): void {
 
 .tab.active {
   color: var(--tc-text-primary);
+  border-bottom-color: var(--tc-accent);
+}
+
+/* Marked-to-travel. Uses the file hue (--tc-info) rather than the accent so it
+   can't be confused with "this is the active tab", and reads as a highlighter
+   pass over the label -- which is what it is. */
+.tab.marked {
+  background: color-mix(in srgb, var(--tc-info) 20%, transparent);
+  color: var(--tc-text-primary);
+  border-radius: var(--tc-border-radius-sm) var(--tc-border-radius-sm) 0 0;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tc-info) 45%, transparent);
+}
+
+.tab.marked.active {
   border-bottom-color: var(--tc-accent);
 }
 

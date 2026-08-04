@@ -3,6 +3,7 @@ import { promises as fsp } from "fs";
 import path from "path";
 import os from "os";
 import { createLogger } from "../util/logger";
+import { wasPickedInDialog } from "./dialog-ipc";
 import {
   assertAllowed,
   looksBinary,
@@ -17,6 +18,8 @@ import {
   unwatchAll,
   type WatchKind,
 } from "../file/file-watcher";
+import { DEFAULT_HIDDEN } from "../file/ignore";
+import { searchProject } from "../file/file-search";
 import type {
   DirEntry,
   ReadFileResult,
@@ -26,22 +29,8 @@ import type {
 
 const logger = createLogger("FileIPC");
 
-/**
- * Directories the explorer hides by default. These are the ones that make a
- * tree unusable rather than merely noisy -- .git has tens of thousands of
- * objects, node_modules more -- and the renderer can ask for them explicitly.
- */
-const DEFAULT_HIDDEN = new Set([
-  ".git",
-  "node_modules",
-  ".DS_Store",
-  "__pycache__",
-  ".next",
-  ".nuxt",
-  ".turbo",
-  ".venv",
-  "venv",
-]);
+// Which directories the explorer hides by default now lives in ./ignore, so
+// project search skips exactly the same set (see file-search.ts).
 
 function sortEntries(entries: DirEntry[]): DirEntry[] {
   return entries.sort((a, b) => {
@@ -50,7 +39,12 @@ function sortEntries(entries: DirEntry[]): DirEntry[] {
   });
 }
 
-export function registerFileIPC(window: BrowserWindow): void {
+/**
+ * Point file-change events at a window and re-arm the reload cleanup hook.
+ * Split out from handler registration so a second window (macOS dock-reopen)
+ * rebinds without re-running ipcMain.handle, which throws on a duplicate.
+ */
+export function bindFileWindow(window: BrowserWindow): void {
   setFileChangeEmitter((event) => {
     if (!window.isDestroyed()) {
       window.webContents.send("file:changed", event);
@@ -65,7 +59,9 @@ export function registerFileIPC(window: BrowserWindow): void {
   window.webContents.on("did-start-loading", () => {
     unwatchAll();
   });
+}
 
+export function registerFileIPC(): void {
   ipcMain.handle("file:listDir", async (_, { path: dirPath, showHidden = false }) => {
     const safe = await assertAllowed(dirPath);
     const dirents = await fsp.readdir(safe, { withFileTypes: true });
@@ -163,8 +159,23 @@ export function registerFileIPC(window: BrowserWindow): void {
       // where a working one used to be. The temp file is a sibling so the
       // rename stays on one filesystem (and so it lands inside the allowlist).
       const tmp = path.join(path.dirname(safe), `.${path.basename(safe)}.tc-tmp`);
+
+      // The rename replaces the inode, so the new file would otherwise come
+      // back with default permissions. Saving a one-character edit to a shell
+      // script or a git hook silently dropped its executable bit -- and
+      // committed a 100755 -> 100644 diff that broke it for everyone else.
+      let originalMode: number | null = null;
+      try {
+        originalMode = (await fsp.stat(safe)).mode;
+      } catch {
+        // New file -- nothing to preserve.
+      }
+
       try {
         await fsp.writeFile(tmp, content, "utf8");
+        if (originalMode !== null) {
+          await fsp.chmod(tmp, originalMode & 0o7777);
+        }
         await fsp.rename(tmp, safe);
       } catch (error) {
         await fsp.rm(tmp, { force: true }).catch(() => {});
@@ -239,18 +250,34 @@ export function registerFileIPC(window: BrowserWindow): void {
 
   /**
    * Grant access to a folder the user explicitly picked in a native dialog.
-   * This is the only way the allowlist widens at the renderer's request, and it
-   * requires the user to have gone through the OS picker first -- the renderer
-   * passes back a path the dialog returned, and we re-verify it exists.
+   *
+   * This is the only way the allowlist widens at the renderer's request, so
+   * the path is checked against what the dialog actually returned this run --
+   * not merely assumed to have come from there. Without that check the
+   * renderer could register `/` and turn every file handler below into
+   * arbitrary read/write of the user's disk.
    */
   ipcMain.handle("file:addRoot", async (_, { path: target }) => {
     const resolved = path.resolve(String(target ?? ""));
+    if (!wasPickedInDialog(resolved)) {
+      logger.warn(`Refused root grant for a path the user never picked: ${resolved}`);
+      throw new Error("Folder access must be granted through the file picker");
+    }
     const st = await fsp.stat(resolved);
     const dir = st.isDirectory() ? resolved : path.dirname(resolved);
     registerRoot(dir);
     logger.info(`Root granted: ${dir}`);
     return dir;
   });
+
+  /**
+   * Search the open project folders by file name or file contents. Takes no
+   * path from the renderer -- the scope is the guard's allowlist itself -- so
+   * this widens nothing that listDir/read didn't already reach.
+   */
+  ipcMain.handle("file:search", async (_, { query, mode, limit }) =>
+    searchProject({ query, mode, limit })
+  );
 
   ipcMain.handle("file:listRoots", async () => listRoots());
 

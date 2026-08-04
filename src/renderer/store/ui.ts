@@ -1,5 +1,6 @@
-import { defineStore } from "pinia";
+import { acceptHMRUpdate, defineStore } from "pinia";
 import { ref, computed, onScopeDispose } from "vue";
+import type { FileSearchMode } from "@renderer/type/file";
 
 export type InspectorTab = "terminal" | "prompt" | "settings";
 export type SidebarTab = "layers" | "workspaces";
@@ -35,6 +36,8 @@ const TERMINAL_TITLE_SIZE_KEY = "terminal-canvas:terminal-title-size";
 const NEW_ITEM_PLACEMENT_KEY = "terminal-canvas:new-item-placement";
 const SHOW_SHELL_TYPE_KEY = "terminal-canvas:show-shell-type";
 const FILE_DRAWER_WIDTH_KEY = "terminal-canvas:file-drawer-width";
+const FILE_EXPLORER_DEFAULT_KEY = "terminal-canvas:file-explorer-default-open";
+const MINIMAP_VISIBLE_KEY = "terminal-canvas:minimap-visible";
 
 function readStoredWidth(key: string, fallback: number): number {
   const raw = localStorage.getItem(key);
@@ -96,6 +99,25 @@ export const useUIStore = defineStore("ui", () => {
     return fileDrawerWidth.value - previous;
   }
 
+  /**
+   * Whether a new terminal opens with its file explorer already showing.
+   *
+   * On by default -- landing in a project with its files visible is the point
+   * of the drawer -- but it also makes every new node wider by the drawer's
+   * width, which isn't what someone running a canvas of small terminals wants.
+   * Only affects terminals created from here on; existing ones (and the drawer
+   * state a saved workspace restores) are untouched. See createSession for
+   * which new terminals it applies to.
+   */
+  const fileExplorerDefaultOpen = ref(
+    localStorage.getItem(FILE_EXPLORER_DEFAULT_KEY) !== "false"
+  );
+
+  function setFileExplorerDefaultOpen(value: boolean): void {
+    fileExplorerDefaultOpen.value = value;
+    localStorage.setItem(FILE_EXPLORER_DEFAULT_KEY, String(value));
+  }
+
   // ─── Terminal title size ─────────────────────────────────────────
   // Replaced the old three-way header-style setting. The variants differed by
   // how much they stacked below the name (cwd line, duplicate agent pill) --
@@ -118,6 +140,21 @@ export const useUIStore = defineStore("ui", () => {
   function setShowShellType(value: boolean): void {
     showShellType.value = value;
     localStorage.setItem(SHOW_SHELL_TYPE_KEY, String(value));
+  }
+
+  // ─── Minimap ─────────────────────────────────────────────────────
+  // On by default (it's how you find your way around a large canvas), but it
+  // permanently occupies a corner and grows on hover, so it's worth being able
+  // to turn off on a small display.
+  const minimapVisible = ref(localStorage.getItem(MINIMAP_VISIBLE_KEY) !== "false");
+
+  function setMinimapVisible(value: boolean): void {
+    minimapVisible.value = value;
+    localStorage.setItem(MINIMAP_VISIBLE_KEY, String(value));
+  }
+
+  function toggleMinimap(): void {
+    setMinimapVisible(!minimapVisible.value);
   }
 
   // ─── New-item placement behavior ─────────────────────────────────
@@ -260,6 +297,41 @@ export const useUIStore = defineStore("ui", () => {
     homeVisible.value = false;
   }
 
+  // ─── Layers tree ─────────────────────────────────────────────────
+  // Which terminals have their open editors folded away in the Layers list.
+  // Stored as the *collapsed* set so a terminal that opens a file for the
+  // first time shows it, rather than hiding it until you find the twisty.
+  // Session-scoped on purpose: a workspace reload starts fully expanded.
+  const collapsedLayerIds = ref<Set<string>>(new Set());
+
+  function isLayerExpanded(id: string): boolean {
+    return !collapsedLayerIds.value.has(id);
+  }
+
+  function toggleLayerExpanded(id: string): void {
+    const next = new Set(collapsedLayerIds.value);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    collapsedLayerIds.value = next;
+  }
+
+  // ─── Project Search ──────────────────────────────────────────────
+  // Find a file by name, or a line of code by its text, across every project
+  // folder currently open in the workspace. Which mode the dialog lands in is
+  // remembered for the session but not persisted -- it follows the shortcut
+  // you used to open it.
+  const searchOpen = ref(false);
+  const searchMode = ref<FileSearchMode>("name");
+
+  function openSearch(mode?: FileSearchMode): void {
+    if (mode) searchMode.value = mode;
+    searchOpen.value = true;
+  }
+
+  function closeSearch(): void {
+    searchOpen.value = false;
+  }
+
   // ─── Dialog State ────────────────────────────────────────────────
   const commandPaletteOpen = ref(false);
   const newTerminalDialogOpen = ref(false);
@@ -345,6 +417,28 @@ export const useUIStore = defineStore("ui", () => {
   /** Toggle the memory side-panel for a staged terminal. */
   function toggleFocusMemory(id: string): void {
     focusMemoryTerminalId.value = focusMemoryTerminalId.value === id ? null : id;
+  }
+
+  // ─── Focus Mode: files panel (pinned left of the stage) ──────────
+  // Focus Mode is otherwise all terminal; this is the one place a file lives
+  // there. It's stage-level rather than per-tile deliberately -- one file
+  // beside every terminal you're watching, not a tree inside each of them.
+  const focusFilesOpen = ref(false);
+  const focusFilePath = ref<string | null>(null);
+
+  function toggleFocusFiles(): void {
+    focusFilesOpen.value = !focusFilesOpen.value;
+  }
+
+  /** Pin a file open on the left of the Focus stage (opening the panel). */
+  function openFocusFile(path: string): void {
+    focusFilePath.value = path;
+    focusFilesOpen.value = true;
+  }
+
+  /** Back out of the pinned file to the tree, leaving the panel open. */
+  function clearFocusFile(): void {
+    focusFilePath.value = null;
   }
 
   // ─── Canvas Pan Mode ─────────────────────────────────────────────
@@ -500,8 +594,10 @@ export const useUIStore = defineStore("ui", () => {
     inspectorWidth,
     memoryRailWidth,
     fileDrawerWidth,
+    fileExplorerDefaultOpen,
     terminalTitleSize,
     showShellType,
+    minimapVisible,
     newItemPlacement,
     revealTarget,
     hoveredTerminalId,
@@ -513,8 +609,13 @@ export const useUIStore = defineStore("ui", () => {
     focusPage,
     focusPageCount,
     focusMemoryTerminalId,
+    focusFilesOpen,
+    focusFilePath,
     homeVisible,
     isPanKeyPressed,
+    collapsedLayerIds,
+    searchOpen,
+    searchMode,
     commandPaletteOpen,
     newTerminalDialogOpen,
     groqSettingsOpen,
@@ -539,8 +640,11 @@ export const useUIStore = defineStore("ui", () => {
     setInspectorWidth,
     setMemoryRailWidth,
     setFileDrawerWidth,
+    setFileExplorerDefaultOpen,
     setTerminalTitleSize,
     setShowShellType,
+    setMinimapVisible,
+    toggleMinimap,
     setNewItemPlacement,
     revealNewItem,
     setHoveredTerminal,
@@ -554,8 +658,15 @@ export const useUIStore = defineStore("ui", () => {
     setFocusPerScreen,
     setFocusPage,
     toggleFocusMemory,
+    toggleFocusFiles,
+    openFocusFile,
+    clearFocusFile,
     showHome,
     hideHome,
+    isLayerExpanded,
+    toggleLayerExpanded,
+    openSearch,
+    closeSearch,
     openCommandPalette,
     closeCommandPalette,
     toggleCommandPalette,
@@ -571,3 +682,13 @@ export const useUIStore = defineStore("ui", () => {
     hideToast,
   };
 });
+
+// Pinia caches store instances by id, so a hot-swapped store module would
+// otherwise leave every component bound to the instance built from the *old*
+// code -- newly added state and getters simply wouldn't exist on it, and the
+// symptom is a component rendering as if half its data vanished. This patches
+// the live instance instead. Dev only: `import.meta.hot` is undefined in a
+// production build, so the block drops out.
+if (import.meta.hot) {
+  import.meta.hot.accept(acceptHMRUpdate(useUIStore, import.meta.hot));
+}

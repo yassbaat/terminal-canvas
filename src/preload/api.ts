@@ -7,6 +7,7 @@ import type {
   ShellAPI,
   DialogAPI,
   FileAPI,
+  AppAPI,
 } from "./api-types";
 import type { FileChangedEvent } from "@renderer/type/file";
 import type {
@@ -110,6 +111,7 @@ const groq: GroqAPI = {
   summarizeCommand: (text) => ipcRenderer.invoke("groq:summarizeCommand", { text }),
   getSettings: () => ipcRenderer.invoke("groq:getSettings"),
   updateSettings: (settings) => ipcRenderer.invoke("groq:updateSettings", { settings }),
+  clearApiKey: () => ipcRenderer.invoke("groq:clearApiKey"),
   testConnection: () => ipcRenderer.invoke("groq:testConnection"),
 };
 
@@ -127,6 +129,17 @@ const shell: ShellAPI = {
 
 const dialog: DialogAPI = {
   showOpenDialog: (options) => ipcRenderer.invoke("dialog:showOpenDialog", options),
+  showMessageBox: (options) => ipcRenderer.invoke("dialog:showMessageBox", options),
+};
+
+const appApi: AppAPI = {
+  onCloseRequested: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on("app:closeRequested", handler);
+    return () => ipcRenderer.removeListener("app:closeRequested", handler);
+  },
+  confirmClose: () => ipcRenderer.send("app:confirmClose"),
+  cancelClose: () => ipcRenderer.send("app:cancelClose"),
 };
 
 const file: FileAPI = {
@@ -145,6 +158,7 @@ const file: FileAPI = {
   addRoot: (path) => ipcRenderer.invoke("file:addRoot", { path }),
   listRoots: () => ipcRenderer.invoke("file:listRoots"),
   homeDir: () => ipcRenderer.invoke("file:homeDir"),
+  search: (query, mode, limit) => ipcRenderer.invoke("file:search", { query, mode, limit }),
   onChanged: (callback: (event: FileChangedEvent) => void) => {
     const handler = (_: unknown, data: FileChangedEvent) => callback(data);
     ipcRenderer.on("file:changed", handler);
@@ -162,5 +176,6 @@ export function exposeAPI(): void {
     shell,
     dialog,
     file,
+    app: appApi,
   });
 }

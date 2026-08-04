@@ -98,18 +98,34 @@ async function finish() {
     workspaceStore.updateSettings({ defaultShellId: selectedShellId.value });
   }
 
-  // Mark onboarding as complete
-  localStorage.setItem("terminal-canvas:onboarded", "true");
-
   // Create a first terminal (skip if no shell is available yet rather than
   // falling back to a Windows-only id like "cmd" that doesn't exist on
   // macOS/Linux and would throw "Shell not found").
-  const shellId = selectedShellId.value || terminalStore.shells[0]?.id;
-  if (shellId) {
-    await terminalStore.createSession({ shellId, cols: 80, rows: 24 });
+  //
+  // The spawn can genuinely fail on a first run -- an unsigned/blocked
+  // spawn-helper in a packaged build, or a shell removed since step 2. It used
+  // to reject unhandled, which meant the dialog never closed and the button
+  // looked simply dead. Say what happened, and finish onboarding either way so
+  // the user reaches the app instead of being stuck behind a modal.
+  try {
+    const shellId = selectedShellId.value || terminalStore.shells[0]?.id;
+    if (shellId) {
+      await terminalStore.createSession({ shellId, cols: 80, rows: 24 });
+    }
+  } catch (err) {
+    console.error("[Onboarding] Failed to create the first terminal", err);
+    uiStore.showToast(
+      err instanceof Error
+        ? `Couldn't start a terminal: ${err.message}`
+        : "Couldn't start a terminal"
+    );
+  } finally {
+    // Written here, not before the spawn: flagging onboarding complete first
+    // meant a force-quit at this point never showed it again, leaving a
+    // half-configured app.
+    localStorage.setItem("terminal-canvas:onboarded", "true");
+    uiStore.closeOnboarding();
   }
-
-  uiStore.closeOnboarding();
 }
 
 function finishWithoutTerminal() {
@@ -327,18 +343,25 @@ function finishWithoutTerminal() {
 .onboarding-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.75);
+  /* Warm-black tint (same hue as --tc-bg-primary) rather than flat rgba(0,0,0,..),
+     plus a real glass blur so the canvas grid behind it stays a visible, softly
+     blurred texture instead of vanishing behind a solid scrim. */
+  background: hsla(43, 28%, 5%, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: var(--tc-z-modal);
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(16px) saturate(150%);
 }
 
 .onboarding-card {
-  background: var(--tc-bg-card);
+  /* --tc-hero-glow is a radial gradient that fades to transparent, layered
+     over the flat card color -- gives the top of the card a soft accent-blue
+     wash instead of a flat fill, without needing a photo asset. */
+  background: var(--tc-hero-glow), var(--tc-bg-card);
+  background-repeat: no-repeat;
   border: 1px solid var(--tc-border-color);
-  border-radius: var(--tc-border-radius);
+  border-radius: calc(var(--tc-border-radius) * 1.5);
   width: 560px;
   max-width: 92vw;
   max-height: 90vh;

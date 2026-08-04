@@ -5,11 +5,7 @@ import { useTerminalStore } from "@renderer/store/terminal";
 import { useUIStore } from "@renderer/store/ui";
 import { AGENT_META } from "@renderer/util/agents";
 import TerminalHeader from "@renderer/component/terminal/TerminalHeader.vue";
-import TerminalFooter from "@renderer/component/terminal/TerminalFooter.vue";
 import XtermView from "@renderer/component/terminal/XtermView.vue";
-import FileTabStrip from "@renderer/component/file/FileTabStrip.vue";
-import CodeView from "@renderer/component/file/CodeView.vue";
-import { useFileStore } from "@renderer/store/file";
 import { Minimize2, ArrowLeftRight } from "lucide-vue-next";
 
 const props = defineProps<{
@@ -36,13 +32,6 @@ const agentColor = computed(() =>
 );
 const memoryOpen = computed(() => uiStore.focusMemoryTerminalId === props.session.id);
 
-// Open files follow the terminal onto the stage: the tabs come along, the file
-// explorer does not. A tree inside a tile fights the whole point of Focus Mode,
-// and the drawer is still there on the canvas when you need to pick a new file.
-const fileStore = useFileStore();
-const fileTabs = computed(() => fileStore.getTabs(props.session.id));
-const activeTab = computed(() => fileStore.getActiveTab(props.session.id));
-
 const isDragging = computed(() => props.draggingId === props.session.id);
 const isDropTarget = computed(
   () => props.dropTargetId === props.session.id && props.draggingId !== props.session.id
@@ -52,10 +41,12 @@ function focusBody(): void {
   terminalStore.setFocused(props.session.id);
 }
 
-function handleKill(): void {
-  terminalStore.killSession(props.session.id);
-  terminalStore.removeSession(props.session.id);
-  uiStore.removeFromFocus(props.session.id);
+async function handleKill(): Promise<void> {
+  // Only drop it from the focus stage if it actually closed -- cancelling the
+  // unsaved-changes prompt must leave the tile exactly where it was.
+  if (await terminalStore.closeSession(props.session.id)) {
+    uiStore.removeFromFocus(props.session.id);
+  }
 }
 
 async function handleRestart(): Promise<void> {
@@ -110,9 +101,11 @@ function onHeaderPointerDown(e: PointerEvent): void {
       <TerminalHeader
         :session="session"
         :scale-with-zoom="false"
+        :memory-visible="memoryOpen"
         @kill="handleKill"
         @restart="handleRestart"
         @clear="handleClear"
+        @toggle-memory="uiStore.toggleFocusMemory(session.id)"
       />
     </div>
 
@@ -124,35 +117,18 @@ function onHeaderPointerDown(e: PointerEvent): void {
       <Minimize2 :size="13" />
     </button>
 
-    <FileTabStrip
-      v-if="fileTabs.length > 0"
-      :terminal-id="session.id"
-      :show-drawer-toggle="false"
-      class="focus-tile-tabs"
-    />
-
     <div class="focus-tile-body" @mousedown="focusBody">
-      <!-- Same rule as on the canvas: the xterm stays mounted behind an open
-           file so the PTY screen survives tab switching. -->
+      <!-- Terminal only. Files used to render here as a per-tile tab strip +
+           editor; on this stage they live in the one Files panel pinned to the
+           left instead, so a tile is all terminal and the same file can't be
+           open twice on the same screen. -->
       <XtermView
         :terminal-id="session.id"
         :cols="session.cols"
         :rows="session.rows"
         @focus="focusBody"
       />
-      <CodeView
-        v-if="activeTab"
-        class="focus-tile-code"
-        :path="activeTab"
-        :active="true"
-      />
     </div>
-
-    <TerminalFooter
-      :session="session"
-      :memory-visible="memoryOpen"
-      @toggle-memory="uiStore.toggleFocusMemory(session.id)"
-    />
 
     <!-- Drop-target cue while another tile is being dragged over this one. -->
     <div v-if="isDropTarget" class="focus-tile-drop-cue">
@@ -178,8 +154,23 @@ function onHeaderPointerDown(e: PointerEvent): void {
     transform var(--tc-transition-fast);
 }
 
+/* Which tile has focus has to be unmissable on this stage: it decides where
+   your keystrokes go AND what the Files panel is rooted at, so a 2px ring that
+   reads as "slightly different border" isn't enough. Focused gets the ring plus
+   an accent glow and a full-strength header; the rest sit back. */
 .focus-tile.focused {
-  box-shadow: 0 0 0 2px var(--tc-accent), var(--tc-shadow-lg);
+  border-color: var(--tc-accent);
+  box-shadow: 0 0 0 2px var(--tc-accent),
+    0 0 22px -4px color-mix(in srgb, var(--tc-accent) 55%, transparent),
+    var(--tc-shadow-lg);
+}
+
+.focus-tile:not(.focused) :deep(.terminal-header) {
+  opacity: 0.72;
+}
+
+.focus-tile.focused :deep(.terminal-header) {
+  background: color-mix(in srgb, var(--tc-accent) 10%, var(--tc-bg-header));
 }
 
 /* Compact the shared header on the Focus stage -- full-screen tiles don't need
@@ -234,13 +225,17 @@ function onHeaderPointerDown(e: PointerEvent): void {
   border-color: transparent;
 }
 
+/* A moving highlight within one hue (attention -> a lighter tint of itself
+   -> attention) rather than a shift between two hues -- --tc-attention and
+   --tc-accent now sit close enough on the wheel that a hue-shift shimmer
+   would barely read as movement. A brightness sweep stays visible and calm. */
 .focus-tile.needs-attention::after {
   content: "";
   position: absolute;
   inset: 0;
   border-radius: var(--tc-border-radius);
   padding: 2px;
-  background: linear-gradient(120deg, var(--tc-warning), var(--tc-accent), var(--tc-warning));
+  background: linear-gradient(120deg, var(--tc-attention), color-mix(in srgb, var(--tc-attention) 45%, white), var(--tc-attention));
   background-size: 300% 300%;
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
@@ -250,8 +245,11 @@ function onHeaderPointerDown(e: PointerEvent): void {
   pointer-events: none;
 }
 
+/* More urgent than the general amber/accent sweep above -- accent now reads
+   as blue, so this needs its own hue (error red) to still look distinctly
+   more urgent rather than a duller version of the same shimmer. */
 .focus-tile.attention-input::after {
-  background: linear-gradient(120deg, var(--tc-accent), #64b5f6, var(--tc-accent));
+  background: linear-gradient(120deg, var(--tc-accent), var(--tc-error), var(--tc-accent));
   background-size: 300% 300%;
 }
 
@@ -278,16 +276,6 @@ function onHeaderPointerDown(e: PointerEvent): void {
   background: var(--tc-terminal-bg);
   overflow: hidden;
   cursor: text;
-}
-
-.focus-tile-tabs {
-  flex-shrink: 0;
-}
-
-.focus-tile-code {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
 }
 
 .focus-tile-remove {

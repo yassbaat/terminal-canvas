@@ -9,7 +9,6 @@ import {
   FolderPlus,
   Trash2,
   ExternalLink,
-  PanelLeftClose,
 } from "lucide-vue-next";
 import type { DirEntry } from "@renderer/type/file";
 import { getBasename } from "@renderer/util/path";
@@ -29,7 +28,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "open", path: string): void;
-  (e: "close"): void;
   (e: "root-change", dir: string): void;
   (e: "drag-file", payload: { path: string; event: DragEvent }): void;
 }>();
@@ -211,7 +209,7 @@ onBeforeUnmount(() => {
   <div class="file-drawer nodrag nowheel" @contextmenu.prevent="openRootContext">
     <div class="drawer-header">
       <button class="drawer-root" :title="root" @click="pickRoot">
-        <FolderOpen :size="12" />
+        <FolderOpen :size="13" />
         <span class="drawer-root-name">{{ rootLabel }}</span>
       </button>
       <div class="drawer-actions">
@@ -220,13 +218,10 @@ onBeforeUnmount(() => {
           :title="showHidden ? 'Hide ignored folders' : 'Show ignored folders (.git, node_modules…)'"
           @click.stop="showHidden = !showHidden"
         >
-          <component :is="showHidden ? Eye : EyeOff" :size="12" />
+          <component :is="showHidden ? Eye : EyeOff" :size="13" />
         </button>
         <button class="drawer-btn" title="Refresh" @click.stop="refreshTree">
-          <RefreshCw :size="12" />
-        </button>
-        <button class="drawer-btn" title="Hide file explorer" @click.stop="emit('close')">
-          <PanelLeftClose :size="12" />
+          <RefreshCw :size="13" />
         </button>
       </div>
     </div>
@@ -282,21 +277,21 @@ onBeforeUnmount(() => {
         @click.stop
       >
         <button class="menu-item" @click="startCreate('file')">
-          <FilePlus :size="12" /> New file
+          <FilePlus :size="13" /> New file
         </button>
         <button class="menu-item" @click="startCreate('directory')">
-          <FolderPlus :size="12" /> New folder
+          <FolderPlus :size="13" /> New folder
         </button>
         <template v-if="menu.entry">
           <div class="menu-divider" />
           <button class="menu-item" @click="startRename">Rename…</button>
           <button class="menu-item menu-item-danger" @click="trashEntry">
-            <Trash2 :size="12" /> Move to Trash
+            <Trash2 :size="13" /> Move to Trash
           </button>
         </template>
         <div class="menu-divider" />
         <button class="menu-item" @click="revealEntry">
-          <ExternalLink :size="12" /> Reveal in file manager
+          <ExternalLink :size="13" /> Reveal in file manager
         </button>
       </div>
     </Teleport>
@@ -326,15 +321,17 @@ onBeforeUnmount(() => {
 .drawer-root {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   flex: 1;
   min-width: 0;
-  padding: 2px 4px;
+  padding: 3px 4px;
   background: none;
   border: none;
   border-radius: var(--tc-border-radius-sm);
-  color: var(--tc-text-secondary);
-  font-size: 11px;
+  /* Full contrast, not secondary -- this is the file explorer's own title and
+     should read as clearly as the terminal name does in the header above it. */
+  color: var(--tc-text-primary);
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }

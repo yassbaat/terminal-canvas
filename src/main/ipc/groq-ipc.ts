@@ -4,6 +4,7 @@ import {
   generateGroupName,
   getGroqConfig,
   updateGroqConfig,
+  clearGroqApiKey,
   summarizeCommand,
 } from "../groq/groq-naming-service";
 import { terminalManager } from "../terminal/terminal-manager";
@@ -52,6 +53,18 @@ export function registerGroqIPC(): void {
     } catch (error) {
       logger.error("IPC: groq:getSettings failed", error);
       return null;
+    }
+  });
+
+  // Clearing the key needs its own channel: updateSettings treats an empty
+  // apiKey as "unchanged" so the onboarding dialog can't wipe a key supplied
+  // via GROQ_API_KEY, which means saving a blank field can't mean "remove it".
+  ipcMain.handle("groq:clearApiKey", async () => {
+    try {
+      clearGroqApiKey();
+    } catch (error) {
+      logger.error("IPC: groq:clearApiKey failed", error);
+      throw error;
     }
   });
 

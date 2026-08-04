@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useTerminalStore } from "@renderer/store/terminal";
+import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useLaunchProfileStore } from "@renderer/store/launchProfile";
 import { useUIStore } from "@renderer/store/ui";
-import { X } from "lucide-vue-next";
+import { Settings2, X } from "lucide-vue-next";
 
 const props = defineProps<{
   open: boolean;
@@ -14,48 +15,51 @@ const emit = defineEmits<{
 }>();
 
 const terminalStore = useTerminalStore();
+const workspaceStore = useWorkspaceStore();
 const launchProfileStore = useLaunchProfileStore();
 const uiStore = useUIStore();
-const selectedShellId = ref("");
-const customCwd = ref("");
-const selectedProfileId = ref("plain-shell");
+const customCwd = ref(launchProfileStore.lastCwd);
+const selectedProfileId = ref(launchProfileStore.lastProfileId);
 
-// Auto-select first shell when shells load or dialog opens
+// Re-read on every open rather than only at mount: the dialog stays mounted for
+// the life of the window, so this is what picks up a selection made since the
+// last open -- and what re-validates it if the remembered profile was deleted
+// in Settings in between.
 watch(
   () => props.open,
   (isOpen) => {
-    if (isOpen && terminalStore.shells.length > 0 && !selectedShellId.value) {
-      selectedShellId.value = terminalStore.shells[0].id;
-    }
+    if (!isOpen) return;
+    selectedProfileId.value = launchProfileStore.lastProfileId;
+    customCwd.value = launchProfileStore.lastCwd;
   }
 );
 
-watch(
-  () => terminalStore.shells,
-  (shells) => {
-    if (shells.length > 0 && !selectedShellId.value) {
-      selectedShellId.value = shells[0].id;
-    }
-  },
-  { immediate: true }
-);
-
-onMounted(() => {
-  if (terminalStore.shells.length > 0 && !selectedShellId.value) {
-    selectedShellId.value = terminalStore.shells[0].id;
-  }
+/**
+ * Which shell a new terminal opens, resolved rather than asked for. Same
+ * precedence the canvas/palette/Focus "new terminal" paths already use --
+ * this session's default, then the workspace's, then whatever the detector
+ * reported first (which is $SHELL).
+ */
+const resolvedShellId = computed(() => {
+  const preferred =
+    terminalStore.sessionDefaultShellId || workspaceStore.settings.defaultShellId;
+  const match = terminalStore.shells.find((s) => s.id === preferred);
+  return match?.id ?? terminalStore.shells[0]?.id ?? "";
 });
 
 async function create() {
-  if (!selectedShellId.value) return;
+  if (!resolvedShellId.value) return;
 
   const profile = launchProfileStore.getProfile(selectedProfileId.value);
+  const cwd = customCwd.value.trim();
+
+  launchProfileStore.rememberSelection(selectedProfileId.value, cwd);
 
   await terminalStore.createSession({
-    shellId: selectedShellId.value,
+    shellId: resolvedShellId.value,
     cols: 80,
     rows: 24,
-    cwd: customCwd.value || undefined,
+    cwd: cwd || undefined,
     autoRunCommand: profile?.command || undefined,
   });
   close();
@@ -77,10 +81,10 @@ async function browseCwd() {
   }
 }
 
+// Deliberately leaves the fields alone -- what they should hold next time is
+// the last selection actually used, which the open watcher restores.
 function close() {
   emit("update:open", false);
-  customCwd.value = "";
-  selectedProfileId.value = "plain-shell";
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -107,26 +111,17 @@ function onKeydown(event: KeyboardEvent) {
       </div>
 
       <div class="dialog-body">
+        <!-- No shell picker: a new terminal always opens the default shell
+             ($SHELL, or the workspace's configured default). Choosing between
+             zsh/bash/sh was a decision nobody wanted to make on every single
+             terminal -- it's still switchable in Settings. The provider row is
+             unlabelled for the same reason the shell picker is gone: the chips
+             say what they are, and a "Launch (optional)" heading over them was
+             one more line to read on the way to a terminal. -->
         <div class="form-group">
-          <label>Shell</label>
-          <div class="shell-options">
-            <button
-              v-for="shell in terminalStore.shells"
-              :key="shell.id"
-              class="shell-option"
-              :class="{ active: selectedShellId === shell.id }"
-              @click="selectedShellId = shell.id"
-            >
-              {{ shell.name }}
-            </button>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label>Launch (optional)</label>
           <div class="profile-options">
             <button
-              v-for="profile in launchProfileStore.allProfiles"
+              v-for="profile in launchProfileStore.featuredProfiles"
               :key="profile.id"
               class="profile-option"
               :class="{ active: selectedProfileId === profile.id }"
@@ -138,19 +133,15 @@ function onKeydown(event: KeyboardEvent) {
               {{ profile.label }}
             </button>
           </div>
-          <span class="form-hint">
-            Auto-types and submits the command once the shell is ready.
-            <a href="#" class="manage-profiles-link" @click.prevent="openLaunchProfileSettings">Manage providers &amp; commands</a>
-          </span>
         </div>
 
         <div class="form-group">
-          <label>Working Directory (optional)</label>
+          <label>Folder (optional)</label>
           <div class="cwd-input-row">
             <input
               v-model="customCwd"
               class="tc-input cwd-input"
-              placeholder="C:\Projects\..."
+              placeholder="Defaults to your home folder"
               type="text"
             />
             <button class="tc-btn browse-btn" @click="browseCwd">Browse</button>
@@ -160,8 +151,17 @@ function onKeydown(event: KeyboardEvent) {
       </div>
 
       <div class="dialog-footer">
-        <button class="tc-btn" @click="close">Cancel</button>
-        <button class="tc-btn tc-btn-primary" @click="create">Create</button>
+        <button
+          class="default-options-btn"
+          title="Default options"
+          @click="openLaunchProfileSettings"
+        >
+          <Settings2 :size="15" />
+        </button>
+        <div class="dialog-footer-actions">
+          <button class="tc-btn" @click="close">Cancel</button>
+          <button class="tc-btn tc-btn-primary" @click="create">Create</button>
+        </div>
       </div>
     </div>
   </div>
@@ -231,12 +231,21 @@ function onKeydown(event: KeyboardEvent) {
   gap: 14px;
 }
 
+/* The gear sits opposite the actions rather than beside them: it goes to
+   Settings instead of doing anything to this terminal, so it shouldn't read as
+   a third button in the Cancel/Create sequence. */
 .dialog-footer {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
   padding: 10px 14px;
   border-top: 1px solid var(--tc-border-color);
+}
+
+.dialog-footer-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .form-group {
@@ -251,34 +260,6 @@ function onKeydown(event: KeyboardEvent) {
   font-weight: 500;
 }
 
-.shell-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.shell-option {
-  padding: 5px 11px;
-  border: 1px solid var(--tc-border-color);
-  border-radius: var(--tc-border-radius-sm);
-  background: var(--tc-bg-secondary);
-  color: var(--tc-text-secondary);
-  cursor: pointer;
-  font-size: var(--tc-font-size-sm);
-  transition: all var(--tc-transition-fast);
-  font-family: var(--tc-font-sans);
-}
-
-.shell-option:hover {
-  border-color: var(--tc-border-focus);
-  color: var(--tc-text-primary);
-}
-
-.shell-option.active {
-  border-color: var(--tc-accent);
-  background: var(--tc-accent-soft);
-  color: var(--tc-accent);
-}
 
 .profile-options {
   display: flex;
@@ -315,14 +296,23 @@ function onKeydown(event: KeyboardEvent) {
   line-height: 1;
 }
 
-.manage-profiles-link {
-  color: var(--tc-accent);
-  text-decoration: none;
-  margin-left: 4px;
+.default-options-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--tc-text-muted);
+  border-radius: var(--tc-border-radius-sm);
+  cursor: pointer;
+  transition: all var(--tc-transition-fast);
 }
 
-.manage-profiles-link:hover {
-  text-decoration: underline;
+.default-options-btn:hover {
+  background: var(--tc-bg-hover);
+  color: var(--tc-text-primary);
 }
 
 .tc-input {

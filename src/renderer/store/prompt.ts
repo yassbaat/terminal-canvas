@@ -1,4 +1,4 @@
-import { defineStore } from "pinia";
+import { acceptHMRUpdate, defineStore } from "pinia";
 import { ref, computed } from "vue";
 import type { PromptEntry } from "@renderer/type/prompt";
 
@@ -186,3 +186,13 @@ export const usePromptStore = defineStore("prompt", () => {
     setupListeners,
   };
 });
+
+// Pinia caches store instances by id, so a hot-swapped store module would
+// otherwise leave every component bound to the instance built from the *old*
+// code -- newly added state and getters simply wouldn't exist on it, and the
+// symptom is a component rendering as if half its data vanished. This patches
+// the live instance instead. Dev only: `import.meta.hot` is undefined in a
+// production build, so the block drops out.
+if (import.meta.hot) {
+  import.meta.hot.accept(acceptHMRUpdate(usePromptStore, import.meta.hot));
+}

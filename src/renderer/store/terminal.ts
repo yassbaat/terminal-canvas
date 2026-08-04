@@ -1,4 +1,4 @@
-import { defineStore } from "pinia";
+import { acceptHMRUpdate, defineStore } from "pinia";
 import { ref, computed, triggerRef } from "vue";
 import type {
   TerminalSession,
@@ -10,6 +10,7 @@ import { findNonOverlappingPosition } from "@renderer/util/placement";
 import { playAttentionChime } from "@renderer/util/sound";
 import { useUIStore } from "@renderer/store/ui";
 import { useWorkspaceStore } from "@renderer/store/workspace";
+import { useFileStore } from "@renderer/store/file";
 import { detectAgentFromCommand } from "@renderer/util/agents";
 
 /**
@@ -76,6 +77,14 @@ export const useTerminalStore = defineStore("terminal", () => {
       groups?: Group[];
       /** Typed and submitted automatically once the shell's first prompt appears (see scheduleAutoRun). */
       autoRunCommand?: string;
+      /**
+       * Center the canvas on the new terminal and focus it. Default true.
+       * Option-drag duplication sets this false: the copy lands exactly where
+       * the user dropped it, and yanking the viewport there -- or moving
+       * keyboard focus off the session they were watching -- is the opposite
+       * of what that gesture promises.
+       */
+      reveal?: boolean;
     }
   ): Promise<TerminalSession> {
     // New terminals spawn at the user-configurable default box size
@@ -96,6 +105,35 @@ export const useTerminalStore = defineStore("terminal", () => {
     });
 
     session.activeAgent = null;
+
+    // Whether a new terminal opens showing its files is the user's call
+    // (Settings > General > "Open the file explorer in new terminals").
+    //
+    // Still conditional on there being a project to show: `options.cwd` means
+    // the directory was chosen deliberately (the New Terminal dialog, a folder
+    // opened from Finder), and `repoRoot` catches a terminal that landed inside
+    // a repo anyway. Main falls back to the home directory when neither caller
+    // nor detection supplies a cwd, and a 240px-wide tree of someone's home
+    // folder is not what "show me my files" means -- those stay closed, and the
+    // header's Files button still opens them on demand.
+    //
+    // `options.id === undefined` is the same check the reveal-new-item logic
+    // below uses to distinguish a genuinely new terminal from a workspace
+    // restore -- a restore always passes the saved id, and its drawer state
+    // comes from the saved workspace instead.
+    //
+    // The width bump is not cosmetic: an open drawer's width is baked into its
+    // node's geometry (see TerminalNode's toggleDrawer), so a node opened
+    // without it would shrink by a width it never had the first time the user
+    // closes the drawer. It also has to happen before placement below, which
+    // reads node.width to find a non-overlapping spot.
+    if (options.id === undefined && (options.cwd || session.repoRoot)) {
+      const uiStore = useUIStore();
+      if (uiStore.fileExplorerDefaultOpen) {
+        session.fileDrawerOpen = true;
+        session.node.width = Math.max(300, session.node.width + uiStore.fileDrawerWidth);
+      }
+    }
 
     // Use explicit position if provided, otherwise find non-overlapping position
     if (options.x !== undefined && options.y !== undefined) {
@@ -126,7 +164,7 @@ export const useTerminalStore = defineStore("terminal", () => {
     // A freshly-created terminal always centers and takes focus (focus: true)
     // regardless of the "arrow" placement preference, so the user can start
     // typing into it immediately without hunting for it on the canvas.
-    if (options.id === undefined) {
+    if (options.id === undefined && options.reveal !== false) {
       const uiStore = useUIStore();
       uiStore.revealNewItem({ ...session.node, id: session.id, focus: true });
     }
@@ -223,11 +261,115 @@ export const useTerminalStore = defineStore("terminal", () => {
     }
   }
 
+
+  /**
+   * Tell the workspace store that persisted terminal state changed.
+   *
+   * `isDirty` only watches `currentWorkspace.updatedAt`, and none of the
+   * mutations below touch it -- so renames, cwd changes, node geometry and
+   * open file drawers were all invisible to the save-on-close prompt. Called
+   * only from mutations that change something the workspace file actually
+   * stores; pure runtime signals (output activity, idle/attention badges,
+   * exit status) deliberately do not mark the workspace dirty.
+   */
+  function markWorkspaceDirty(): void {
+    useWorkspaceStore().markDirty();
+  }
+
+  /**
+   * Copy a terminal: a fresh PTY in the same working directory, relaunching
+   * whichever agent the original is running, at the same box size.
+   *
+   * "The agent it's running" is `activeAgent`, which is also exactly the
+   * command that starts it (see BUILT_IN_AGENT_PROFILES) -- so this follows
+   * what the terminal is doing now rather than what it was launched with an
+   * hour ago. A terminal running a plain shell duplicates as a plain shell.
+   *
+   * Deliberately NOT AGENT_RELAUNCH_COMMANDS, which workspace restore uses:
+   * those resume the previous conversation (`claude --continue`,
+   * `codex resume --last`), which is right when reopening a saved workspace
+   * and wrong here -- a duplicate would attach a second terminal to the same
+   * conversation. A copy starts fresh in the same directory.
+   *
+   * Files: only the tabs the user explicitly marked (Cmd/Ctrl-click in the tab
+   * strip) travel with the copy. Carrying all of them would make every
+   * duplicate of a terminal with a dozen files open a mess nobody asked for.
+   */
+  async function duplicateSession(
+    sourceId: string,
+    position?: { x: number; y: number }
+  ): Promise<TerminalSession | null> {
+    const source = sessions.value.get(sourceId);
+    if (!source) return null;
+
+    const workspaceStore = useWorkspaceStore();
+    const fileStore = useFileStore();
+    const size = { width: source.node.width, height: source.node.height };
+
+    // Drop it where it was let go, then let the spiral search push it clear of
+    // anything already there -- including the original it came from.
+    const spot = findNonOverlappingPosition(
+      allSessions.value,
+      workspaceStore.groups,
+      null,
+      position ?? { x: source.node.x + 48, y: source.node.y + 48 },
+      size,
+      workspaceStore.stickyNotes
+    );
+
+    const created = await createSession({
+      shellId: source.shellId,
+      cols: source.cols,
+      rows: source.rows,
+      cwd: source.cwd,
+      width: size.width,
+      height: size.height,
+      x: spot.x,
+      y: spot.y,
+      autoRunCommand: source.activeAgent ?? undefined,
+      reveal: false,
+    });
+
+    // createSession may have opened the drawer (and widened the node for it) on
+    // its own default. Mirror the original instead: a copy that's a different
+    // width from what was dragged doesn't read as a copy.
+    created.fileDrawerOpen = source.fileDrawerOpen;
+    updateNode(created.id, { x: spot.x, y: spot.y, width: size.width, height: size.height });
+
+    // Name it after the original rather than letting it auto-name from the
+    // folder, which would give both terminals the same name.
+    updateSession(created.id, { manualName: duplicateName(source) });
+
+    const carried = fileStore.getMarkedTabs(sourceId);
+    for (const path of carried) {
+      await fileStore.openInTerminal(created.id, path);
+    }
+    // openInTerminal activates each tab as it opens; a duplicate should come up
+    // showing its terminal, with the carried files waiting as tabs.
+    if (carried.length > 0) fileStore.setActiveTab(created.id, null);
+
+    return created;
+  }
+
+  /** "api" -> "api copy" -> "api copy 2" …, skipping names already in use. */
+  function duplicateName(source: TerminalSession): string {
+    const base = (source.manualName || source.autoName || source.name).replace(
+      / copy(?: \d+)?$/,
+      ""
+    );
+    const taken = new Set(allSessions.value.map((s) => s.manualName || s.autoName || s.name));
+    let candidate = `${base} copy`;
+    let n = 2;
+    while (taken.has(candidate)) candidate = `${base} copy ${n++}`;
+    return candidate;
+  }
+
   function updateSession(id: string, patch: Partial<TerminalSession>): void {
     const s = sessions.value.get(id);
     if (s) {
       Object.assign(s, patch);
       s.updatedAt = Date.now();
+      markWorkspaceDirty();
     }
   }
 
@@ -245,6 +387,7 @@ export const useTerminalStore = defineStore("terminal", () => {
       if (node.width !== undefined) s.node.width = node.width;
       if (node.height !== undefined) s.node.height = node.height;
       s.updatedAt = Date.now();
+      markWorkspaceDirty();
       // Force reactivity so computed getters depending on the Map
       // iteration (e.g. allSessions -> terminalNodes) recompute.
       triggerRef(sessions);
@@ -254,10 +397,54 @@ export const useTerminalStore = defineStore("terminal", () => {
   /**
    * Remove a session from the store entirely.
    */
+  /**
+   * Close a terminal for good: confirm any unsaved file edits, kill the PTY,
+   * then tear down everything anchored to it.
+   *
+   * There are five ways to close a terminal (sidebar, node header, focus tile,
+   * command palette, canvas Delete) and removeSession drops the terminal's file
+   * tabs unconditionally, so the confirmation has to live in one shared place
+   * in front of it -- removeSession itself is synchronous and can't await a
+   * dialog. Returns false if the user cancelled and nothing was closed.
+   */
+  async function closeSession(id: string): Promise<boolean> {
+    const fileStore = useFileStore();
+    const ok = await fileStore.confirmDiscard(fileStore.dirtyPathsForTerminal(id));
+    if (!ok) return false;
+    await killSession(id);
+    removeSession(id);
+    return true;
+  }
+
+  /**
+   * Remove a session from the store entirely, along with everything anchored
+   * to it.
+   *
+   * The cleanup lives here rather than at each call site because there are
+   * five ways to close a terminal -- the sidebar, the node header, a focus
+   * tile, the command palette and the canvas Delete key -- and only the canvas
+   * one ever did it. The others left the terminal's connections in
+   * `currentWorkspace.edges` forever: Vue Flow silently drops edges whose
+   * endpoints are missing, so the links were invisible but still saved to
+   * disk, still counted by link cohesion, and would tug unrelated nodes around
+   * if a new terminal ever reused the id.
+   */
   function removeSession(id: string): void {
     sessions.value.delete(id);
     if (focusedTerminalId.value === id) focusedTerminalId.value = null;
     selectedTerminalIds.value.delete(id);
+
+    const workspaceStore = useWorkspaceStore();
+    workspaceStore.removeEdgesForTerminal(id);
+    workspaceStore.unpinNotesForTerminal(id);
+    // The file node stays on the canvas -- it's still a real file worth
+    // reading -- it just stops travelling with a terminal that's gone.
+    workspaceStore.unpinFilesForTerminal(id);
+    // Lazily resolved: file.ts imports terminal.ts, so the store can only be
+    // read at call time, not at module scope.
+    useFileStore().clearForTerminal(id);
+
+    markWorkspaceDirty();
   }
 
   /**
@@ -328,6 +515,7 @@ export const useTerminalStore = defineStore("terminal", () => {
       s.manualName = name;
       s.name = name;
       s.updatedAt = Date.now();
+      markWorkspaceDirty();
     }
   }
 
@@ -340,6 +528,7 @@ export const useTerminalStore = defineStore("terminal", () => {
       s.autoName = name;
       s.name = name;
       s.updatedAt = Date.now();
+      markWorkspaceDirty();
     }
   }
 
@@ -440,6 +629,7 @@ export const useTerminalStore = defineStore("terminal", () => {
         // fileRoot when it isn't pinned, and echoes the pinned value back.
         if (!s.fileRootPinned && fileRoot) s.fileRoot = fileRoot;
         s.updatedAt = Date.now();
+        markWorkspaceDirty();
       }
     });
 
@@ -457,6 +647,7 @@ export const useTerminalStore = defineStore("terminal", () => {
         s.promptCount += 1;
         s.lastPromptAt = Date.now();
         s.updatedAt = Date.now();
+        markWorkspaceDirty();
       }
       detectAgentFromPrompt(terminalId, text);
     });
@@ -468,6 +659,7 @@ export const useTerminalStore = defineStore("terminal", () => {
         s.autoName = name;
         s.name = name;
         s.updatedAt = Date.now();
+        markWorkspaceDirty();
       }
     });
 
@@ -512,11 +704,14 @@ export const useTerminalStore = defineStore("terminal", () => {
     attentionSessions,
     // Actions
     createSession,
+    duplicateSession,
+    scheduleAutoRun,
     killSession,
     restartSession,
     updateSession,
     updateNode,
     adjustOpenDrawerNodes,
+    closeSession,
     removeSession,
     setFocused,
     setSelected,
@@ -534,3 +729,13 @@ export const useTerminalStore = defineStore("terminal", () => {
     setupListeners,
   };
 });
+
+// Pinia caches store instances by id, so a hot-swapped store module would
+// otherwise leave every component bound to the instance built from the *old*
+// code -- newly added state and getters simply wouldn't exist on it, and the
+// symptom is a component rendering as if half its data vanished. This patches
+// the live instance instead. Dev only: `import.meta.hot` is undefined in a
+// production build, so the block drops out.
+if (import.meta.hot) {
+  import.meta.hot.accept(acceptHMRUpdate(useTerminalStore, import.meta.hot));
+}

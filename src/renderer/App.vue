@@ -6,7 +6,6 @@ import { useFileStore } from "@renderer/store/file";
 import { useWorkspaceStore } from "@renderer/store/workspace";
 import { useUIStore } from "@renderer/store/ui";
 import Toolbar from "@renderer/component/app/Toolbar.vue";
-import Statusbar from "@renderer/component/app/Statusbar.vue";
 import Inspector from "@renderer/component/app/Inspector.vue";
 import HomeView from "@renderer/component/app/HomeView.vue";
 import WorkspaceCanvas from "@renderer/component/canvas/WorkspaceCanvas.vue";
@@ -14,6 +13,7 @@ import NewTerminalDialog from "@renderer/component/dialog/NewTerminalDialog.vue"
 import SettingsDialog from "@renderer/component/dialog/SettingsDialog.vue";
 import OnboardingDialog from "@renderer/component/dialog/OnboardingDialog.vue";
 import CommandPalette from "@renderer/component/dialog/CommandPalette.vue";
+import SearchDialog from "@renderer/component/dialog/SearchDialog.vue";
 import FocusMode from "@renderer/component/focus/FocusMode.vue";
 import { PanelRightOpen } from "lucide-vue-next";
 
@@ -68,6 +68,21 @@ function handleKeyDown(e: KeyboardEvent): void {
       (active as HTMLElement).isContentEditable)
   ) {
     return;
+  }
+
+  // Project search is reachable from everywhere -- including Focus Mode and
+  // while a terminal has keyboard focus -- so it's handled before the two
+  // early returns below. The in-terminal case is macOS-only on purpose:
+  // Cmd+P/Cmd+F mean nothing to a shell, while Ctrl+P/Ctrl+F are history and
+  // cursor movement and must keep reaching it (XtermView lets exactly the same
+  // pair through).
+  const searchMod = e.ctrlKey || e.metaKey;
+  if (searchMod && !e.shiftKey && (e.key === "p" || e.key === "f")) {
+    if (!terminalStore.focusedTerminalId || e.metaKey) {
+      uiStore.openSearch(e.key === "f" ? "content" : "name");
+      e.preventDefault();
+      return;
+    }
   }
 
   // Focus Mode handles its own keys (Esc, paging); skip the app/canvas
@@ -151,8 +166,78 @@ function handleKeyDown(e: KeyboardEvent): void {
 
 // Register "Open in Terminal Canvas" listener immediately so we don't miss early events
 const unsubOpenDir = ref<(() => void) | null>(null);
+const unsubCloseRequested = ref<(() => void) | null>(null);
+
+// Guards against the close prompt stacking if the user hits close again while
+// the dialog is already up.
+let closePromptOpen = false;
+
+/**
+ * Offer to save any edited-but-unsaved files before the app goes away.
+ *
+ * Returns false if the close should be abandoned -- either the user cancelled,
+ * or a "Save All" couldn't finish. That second case matters here: a save comes
+ * back with `conflict` when the file changed on disk underneath us, which is
+ * routine when an agent is editing the same file. Closing anyway after
+ * promising to save would discard exactly what the prompt offered to keep.
+ */
+async function confirmUnsavedFiles(): Promise<boolean> {
+  return fileStore.confirmDiscard(fileStore.dirtyPaths);
+}
+
+/**
+ * Main intercepted a window close (close button or Cmd+Q) and is waiting on
+ * us. Offer to save the current workspace first; Cancel keeps the app open.
+ * A clean (already-saved or empty) workspace closes silently.
+ */
+async function handleCloseRequested(): Promise<void> {
+  if (closePromptOpen) return;
+
+  // Unsaved editor buffers first, and independently of the workspace's own
+  // dirty state. File drafts live only in memory -- the workspace stores which
+  // files are open, never their contents -- so a clean workspace with edited
+  // files used to close without any prompt at all and take the edits with it.
+  closePromptOpen = true;
+  try {
+    if (!(await confirmUnsavedFiles())) {
+      window.api.app.cancelClose();
+      return;
+    }
+  } finally {
+    closePromptOpen = false;
+  }
+
+  const ws = workspaceStore.currentWorkspace;
+  if (!ws || !workspaceStore.isDirty) {
+    window.api.app.confirmClose();
+    return;
+  }
+  closePromptOpen = true;
+  try {
+    const { response } = await window.api.dialog.showMessageBox({
+      type: "question",
+      message: `Save workspace "${ws.name}" before closing?`,
+      detail:
+        "Terminal layout, running agents, and open files will be restored the next time you open this workspace.",
+      buttons: ["Save & Close", "Close Without Saving", "Cancel"],
+      defaultId: 0,
+      cancelId: 2,
+    });
+    if (response === 2) {
+      window.api.app.cancelClose();
+      return;
+    }
+    if (response === 0) {
+      await workspaceStore.saveCurrentWorkspace();
+    }
+    window.api.app.confirmClose();
+  } finally {
+    closePromptOpen = false;
+  }
+}
 
 if (typeof window.api !== "undefined") {
+  unsubCloseRequested.value = window.api.app.onCloseRequested(handleCloseRequested);
   unsubOpenDir.value = window.api.shell.onOpenDir(async (dir) => {
     // Skip non-directory paths (e.g. files passed via argv fallback)
     if (dir.endsWith(".exe") || dir.endsWith(".dll")) {
@@ -243,7 +328,8 @@ onMounted(() => {
     if (workspaceStore.workspaceList.length > 0) {
       uiStore.showHome();
     } else {
-      workspaceStore.createNewWorkspace();
+      // First run -- nothing is live yet, so the reset inside is a no-op.
+      void workspaceStore.createNewWorkspace();
     }
   });
 
@@ -269,6 +355,9 @@ onUnmounted(() => {
   window.removeEventListener("paste", handlePaste);
   if (unsubOpenDir.value) {
     unsubOpenDir.value();
+  }
+  if (unsubCloseRequested.value) {
+    unsubCloseRequested.value();
   }
 });
 </script>
@@ -304,9 +393,6 @@ onUnmounted(() => {
           :style="{ width: uiStore.inspectorWidth + 'px' }"
         />
       </div>
-
-      <!-- Bottom status bar -->
-      <Statusbar class="app-statusbar" />
     </template>
 
     <!-- Focus Mode (V2): immersive full-screen stage overlay -->
@@ -317,6 +403,7 @@ onUnmounted(() => {
     <SettingsDialog v-model:open="uiStore.settingsOpen" />
     <OnboardingDialog />
     <CommandPalette v-model:open="uiStore.commandPaletteOpen" />
+    <SearchDialog />
 
     <!-- Toast notification -->
     <Transition name="toast">
@@ -397,12 +484,6 @@ onUnmounted(() => {
   flex-shrink: 0;
   z-index: var(--tc-z-inspector);
   position: relative;
-}
-
-.app-statusbar {
-  flex-shrink: 0;
-  height: 26px;
-  z-index: var(--tc-z-statusbar);
 }
 
 /* Toast */

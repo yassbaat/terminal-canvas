@@ -208,7 +208,7 @@ onBeforeUnmount(() => {
   >
     <NodeResizer :min-width="isTitle ? 180 : 140" :min-height="isTitle ? 60 : 100" :line-style="{ borderColor: color.border }" :handle-style="{ backgroundColor: color.border }" />
     <div class="note-header">
-      <Pin v-if="pinnedTerminal" class="note-pin" :size="12" :title="`Pinned to ${pinnedTerminal.name}`" />
+      <Pin v-if="pinnedTerminal" class="note-pin" :size="13" :title="`Pinned to ${pinnedTerminal.name}`" />
       <span v-else class="note-pin-placeholder" />
       <div class="note-actions">
         <button
@@ -217,7 +217,7 @@ onBeforeUnmount(() => {
           :title="isTitle ? 'Turn back into a note' : 'Turn into a canvas title'"
           @click.stop="toggleTitle"
         >
-          <Type :size="13" />
+          <Type :size="14" />
         </button>
         <button
           v-if="!isTitle"
@@ -226,7 +226,7 @@ onBeforeUnmount(() => {
           :disabled="fontSize <= MIN_NOTE_FONT"
           @click.stop="changeFontSize(-1)"
         >
-          <Minus :size="13" />
+          <Minus :size="14" />
         </button>
         <button
           v-if="!isTitle"
@@ -235,17 +235,17 @@ onBeforeUnmount(() => {
           :disabled="fontSize >= MAX_NOTE_FONT"
           @click.stop="changeFontSize(1)"
         >
-          <Plus :size="13" />
+          <Plus :size="14" />
         </button>
         <button v-if="!isTitle" class="note-btn" title="Change color" @click.stop="cycleColor">
-          <Palette :size="13" />
+          <Palette :size="14" />
         </button>
         <button v-if="!isTitle" class="note-btn" :title="note.pinnedToTerminalId ? 'Unpin' : 'Pin to focused terminal'" @click.stop="togglePin">
-          <PinOff v-if="note.pinnedToTerminalId" :size="13" />
-          <Pin v-else :size="13" />
+          <PinOff v-if="note.pinnedToTerminalId" :size="14" />
+          <Pin v-else :size="14" />
         </button>
         <button class="note-btn" title="Delete note" @click.stop="deleteNote">
-          <X :size="13" />
+          <X :size="14" />
         </button>
       </div>
     </div>

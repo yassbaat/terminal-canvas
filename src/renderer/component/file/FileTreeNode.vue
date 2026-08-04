@@ -84,12 +84,12 @@ defineExpose({ refresh });
         <component
           :is="expanded ? ChevronDown : ChevronRight"
           v-if="entry.isDirectory"
-          :size="12"
+          :size="13"
         />
       </span>
       <component
         :is="entry.isDirectory ? (expanded ? FolderOpen : Folder) : FileIcon"
-        :size="13"
+        :size="14"
         class="tree-icon"
       />
       <span class="tree-name">{{ entry.name }}</span>
@@ -132,10 +132,13 @@ defineExpose({ refresh });
 .tree-row {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 6px 2px 0;
-  font-size: 11.5px;
-  color: var(--tc-text-secondary);
+  gap: 5px;
+  padding: 3px 6px 3px 0;
+  font-size: 12.5px;
+  /* Full contrast at rest -- a file tree is a primary navigation surface, not
+     secondary chrome, and text-secondary made every row read as slightly
+     washed-out even before you started scanning it. */
+  color: var(--tc-text-primary);
   cursor: pointer;
   user-select: none;
   white-space: nowrap;

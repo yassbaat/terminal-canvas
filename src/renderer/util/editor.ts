@@ -1,6 +1,6 @@
 import { EditorView } from "@codemirror/view";
 import { tags as t, tagHighlighter } from "@lezer/highlight";
-import type { LanguageSupport } from "@codemirror/language";
+import { LanguageSupport, StreamLanguage, type StreamParser } from "@codemirror/language";
 
 /**
  * CodeMirror 6 wiring shared by every code surface in the app.
@@ -144,10 +144,182 @@ export const cateEditorTheme = EditorView.theme({
   },
 });
 
+/* ─── Config-file grammars ────────────────────────────────────────────
+ *
+ * The `.env`, shell-script and ini/toml family have no @codemirror/lang-*
+ * package, so a project's most-opened files (.env.local, a deploy script, a
+ * Dockerfile) were the ones rendering as flat grey text. These are small
+ * hand-written StreamLanguage tokenizers rather than a new dependency:
+ * StreamLanguage ships inside @codemirror/language, which is already here, and
+ * it maps these legacy token names onto the same tags cateHighlighter styles.
+ *
+ * They are deliberately shallow -- enough for comments, strings, keys, numbers
+ * and variable interpolation to separate visually. Anything needing a real
+ * parse tree should get a proper grammar instead.
+ */
+
+/** Consume a quoted string, honouring backslash escapes. Returns "string". */
+function eatString(stream: { next(): string | void; eol(): boolean }, quote: string): "string" {
+  let escaped = false;
+  let ch: string | void;
+  while ((ch = stream.next()) != null) {
+    if (ch === quote && !escaped) break;
+    escaped = !escaped && ch === "\\";
+  }
+  return "string";
+}
+
+/** KEY=value files: .env and friends, plus .properties. */
+const dotenvParser: StreamParser<{ afterKey: boolean }> = {
+  name: "dotenv",
+  startState: () => ({ afterKey: false }),
+  token(stream, state) {
+    if (stream.sol()) state.afterKey = false;
+    if (stream.eatSpace()) return null;
+    if (stream.match(/^[#;].*/)) return "comment";
+    if (stream.match(/^export\b/)) return "keyword";
+    // ${VAR} / $VAR interpolation, wherever it appears.
+    if (stream.match(/^\$\{[^}]*\}/) || stream.match(/^\$[A-Za-z_][\w]*/)) return "variableName";
+    const quote = stream.peek();
+    if (quote === '"' || quote === "'" || quote === "`") {
+      stream.next();
+      return eatString(stream, quote);
+    }
+    if (!state.afterKey) {
+      if (stream.match(/^[A-Za-z_][\w.-]*/)) return "propertyName";
+      if (stream.match(/^[=:]/)) {
+        state.afterKey = true;
+        return "operator";
+      }
+      stream.next();
+      return null;
+    }
+    if (stream.match(/^(true|false|null|yes|no|on|off)\b/i)) return "atom";
+    if (stream.match(/^-?\d+(\.\d+)?\b/)) return "number";
+    // Whole run of value text in one token -- one token per character would be
+    // correct but needlessly slow on a long connection string.
+    if (stream.match(/^[^\s$'"`#]+/)) return "string";
+    stream.next();
+    return "string";
+  },
+  languageData: { commentTokens: { line: "#" } },
+};
+
+const SHELL_KEYWORDS =
+  /^(if|then|elif|else|fi|for|in|while|until|do|done|case|esac|function|select|time|return|break|continue|local|export|readonly|declare|source|set|unset|shift|trap|exit)\b/;
+const SHELL_BUILTINS =
+  /^(echo|cd|pwd|read|printf|test|eval|exec|kill|wait|alias|unalias|command|type|hash|umask|jobs|fg|bg)\b/;
+
+const shellParser: StreamParser<Record<string, never>> = {
+  name: "shell",
+  token(stream) {
+    if (stream.eatSpace()) return null;
+    // Shebang as a comment, not "meta": cateHighlighter has no meta class, so
+    // a meta token would come back out unstyled.
+    if (stream.match(/^#!.*/)) return "comment";
+    if (stream.match(/^#.*/)) return "comment";
+    const quote = stream.peek();
+    if (quote === '"' || quote === "'" || quote === "`") {
+      stream.next();
+      return eatString(stream, quote);
+    }
+    if (stream.match(/^\$\{[^}]*\}/) || stream.match(/^\$[\w@*#?$!-]+/) || stream.match(/^\$\(/)) {
+      return "variableName";
+    }
+    if (stream.match(/^-{1,2}[\w-]+/)) return "attributeName";
+    if (stream.match(SHELL_KEYWORDS)) return "keyword";
+    if (stream.match(SHELL_BUILTINS)) return "atom";
+    if (stream.match(/^-?\d+(\.\d+)?\b/)) return "number";
+    if (stream.match(/^[|&;<>()]+/)) return "operator";
+    if (stream.match(/^[\w./-]+/)) return null;
+    stream.next();
+    return null;
+  },
+  languageData: { commentTokens: { line: "#" } },
+};
+
+/** [section] + key = value: .ini, .conf, .toml, .editorconfig, .gitconfig. */
+const iniParser: StreamParser<{ afterKey: boolean }> = {
+  name: "ini",
+  startState: () => ({ afterKey: false }),
+  token(stream, state) {
+    if (stream.sol()) state.afterKey = false;
+    if (stream.eatSpace()) return null;
+    if (stream.match(/^[#;].*/)) return "comment";
+    if (stream.sol() && stream.match(/^\[[^\]]*\]/)) return "typeName";
+    const quote = stream.peek();
+    if (quote === '"' || quote === "'") {
+      stream.next();
+      return eatString(stream, quote);
+    }
+    if (!state.afterKey) {
+      if (stream.match(/^[\w.$-]+/)) return "propertyName";
+      if (stream.match(/^=/)) {
+        state.afterKey = true;
+        return "operator";
+      }
+      stream.next();
+      return null;
+    }
+    if (stream.match(/^(true|false|null)\b/i)) return "atom";
+    if (stream.match(/^-?\d+(\.\d+)?\b/)) return "number";
+    if (stream.match(/^\d{4}-\d{2}-\d{2}([T ][\d:.+Z-]+)?/)) return "number";
+    stream.next();
+    return "string";
+  },
+  languageData: { commentTokens: { line: "#" } },
+};
+
+const DOCKER_INSTRUCTIONS =
+  /^(FROM|RUN|CMD|LABEL|MAINTAINER|EXPOSE|ENV|ADD|COPY|ENTRYPOINT|VOLUME|USER|WORKDIR|ARG|ONBUILD|STOPSIGNAL|HEALTHCHECK|SHELL|AS)\b/i;
+
+const dockerfileParser: StreamParser<Record<string, never>> = {
+  name: "dockerfile",
+  token(stream) {
+    if (stream.eatSpace()) return null;
+    if (stream.match(/^#.*/)) return "comment";
+    if (stream.sol() && stream.match(DOCKER_INSTRUCTIONS)) return "keyword";
+    if (stream.match(DOCKER_INSTRUCTIONS)) return "keyword";
+    const quote = stream.peek();
+    if (quote === '"' || quote === "'") {
+      stream.next();
+      return eatString(stream, quote);
+    }
+    if (stream.match(/^\$\{?[\w]+\}?/)) return "variableName";
+    if (stream.match(/^-{1,2}[\w-]+/)) return "attributeName";
+    if (stream.match(/^-?\d+(\.\d+)?\b/)) return "number";
+    if (stream.match(/^[\w./:-]+/)) return null;
+    stream.next();
+    return null;
+  },
+  languageData: { commentTokens: { line: "#" } },
+};
+
+/** Glob-list files: .gitignore, .dockerignore, .npmignore. */
+const ignoreParser: StreamParser<Record<string, never>> = {
+  name: "ignore",
+  token(stream) {
+    if (stream.eatSpace()) return null;
+    if (stream.match(/^#.*/)) return "comment";
+    if (stream.sol() && stream.match(/^!/)) return "operator";
+    if (stream.match(/^[*?[\]]+/)) return "keyword";
+    if (stream.match(/^[^*?[\]\s]+/)) return "string";
+    stream.next();
+    return null;
+  },
+  languageData: { commentTokens: { line: "#" } },
+};
+
+function stream(parser: StreamParser<any>): LanguageSupport {
+  return new LanguageSupport(StreamLanguage.define(parser));
+}
+
 /**
  * Extension -> grammar loader. Every entry is a dynamic import so the initial
  * renderer bundle doesn't carry a dozen parsers; a grammar is fetched the first
  * time a file of that kind is opened and cached by the module system after that.
+ * (The stream grammars above are already in this module, so those entries just
+ * construct one.)
  */
 const LANGUAGE_LOADERS: Record<string, () => Promise<LanguageSupport>> = {
   js: () => import("@codemirror/lang-javascript").then((m) => m.javascript({ jsx: true })),
@@ -192,6 +364,30 @@ const LANGUAGE_LOADERS: Record<string, () => Promise<LanguageSupport>> = {
   php: () => import("@codemirror/lang-php").then((m) => m.php()),
   xml: () => import("@codemirror/lang-xml").then((m) => m.xml()),
   svg: () => import("@codemirror/lang-xml").then((m) => m.xml()),
+
+  env: async () => stream(dotenvParser),
+  properties: async () => stream(dotenvParser),
+
+  sh: async () => stream(shellParser),
+  bash: async () => stream(shellParser),
+  zsh: async () => stream(shellParser),
+  fish: async () => stream(shellParser),
+  ksh: async () => stream(shellParser),
+  zshrc: async () => stream(shellParser),
+  bashrc: async () => stream(shellParser),
+
+  toml: async () => stream(iniParser),
+  ini: async () => stream(iniParser),
+  cfg: async () => stream(iniParser),
+  conf: async () => stream(iniParser),
+  editorconfig: async () => stream(iniParser),
+
+  dockerfile: async () => stream(dockerfileParser),
+  gitignore: async () => stream(ignoreParser),
+  dockerignore: async () => stream(ignoreParser),
+  npmignore: async () => stream(ignoreParser),
+  eslintignore: async () => stream(ignoreParser),
+  prettierignore: async () => stream(ignoreParser),
 };
 
 /** Dotfiles and extensionless names whose name alone tells us the grammar. */
@@ -200,6 +396,23 @@ const FILENAME_LANGUAGES: Record<string, string> = {
   ".eslintrc": "json",
   ".prettierrc": "json",
   ".swcrc": "json",
+  ".env": "env",
+  ".editorconfig": "editorconfig",
+  ".gitignore": "gitignore",
+  ".dockerignore": "dockerignore",
+  ".npmignore": "npmignore",
+  ".eslintignore": "eslintignore",
+  ".prettierignore": "prettierignore",
+  ".gitconfig": "ini",
+  ".gitattributes": "ignore",
+  ".bashrc": "sh",
+  ".bash_profile": "sh",
+  ".zshrc": "sh",
+  ".zprofile": "sh",
+  ".profile": "sh",
+  dockerfile: "dockerfile",
+  makefile: "sh",
+  procfile: "sh",
 };
 
 function extensionOf(filePath: string): string {
@@ -209,9 +422,23 @@ function extensionOf(filePath: string): string {
   return base.slice(dot + 1).toLowerCase();
 }
 
+/**
+ * `.env.local`, `.env.production`, `Dockerfile.dev` and friends: the meaningful
+ * part is the *first* segment, not the last, so extension matching alone reads
+ * "local" / "dev" and finds nothing. Checked before the plain extension so a
+ * suffixed variant highlights the same as its base file.
+ */
+function prefixLanguage(base: string): string | null {
+  if (base.startsWith(".env")) return "env";
+  if (base.startsWith("dockerfile")) return "dockerfile";
+  if (base.startsWith("makefile")) return "sh";
+  return null;
+}
+
 /** Short label for the status line ("TypeScript", "JSON", …). */
 export function languageLabel(filePath: string): string {
-  const ext = extensionOf(filePath);
+  const base = (filePath.replace(/\\/g, "/").split("/").pop() ?? "").toLowerCase();
+  const ext = FILENAME_LANGUAGES[base] || prefixLanguage(base) || extensionOf(filePath);
   const labels: Record<string, string> = {
     js: "JavaScript", jsx: "JavaScript", mjs: "JavaScript", cjs: "JavaScript",
     ts: "TypeScript", tsx: "TypeScript", mts: "TypeScript", cts: "TypeScript",
@@ -221,7 +448,11 @@ export function languageLabel(filePath: string): string {
     yaml: "YAML", yml: "YAML", sql: "SQL", java: "Java", kt: "Kotlin",
     c: "C", h: "C", cc: "C++", cpp: "C++", hpp: "C++", php: "PHP",
     xml: "XML", svg: "SVG", sh: "Shell", bash: "Shell", zsh: "Shell",
-    toml: "TOML", txt: "Text",
+    fish: "Shell", ksh: "Shell",
+    toml: "TOML", txt: "Text", env: "Dotenv", properties: "Properties",
+    ini: "INI", cfg: "INI", conf: "INI", editorconfig: "EditorConfig",
+    dockerfile: "Dockerfile", gitignore: "Ignore", dockerignore: "Ignore",
+    npmignore: "Ignore", eslintignore: "Ignore", prettierignore: "Ignore",
   };
   return labels[ext] ?? (ext ? ext.toUpperCase() : "Text");
 }
@@ -232,7 +463,8 @@ export function languageLabel(filePath: string): string {
  */
 export async function languageFor(filePath: string): Promise<LanguageSupport | null> {
   const base = (filePath.replace(/\\/g, "/").split("/").pop() ?? "").toLowerCase();
-  const key = extensionOf(filePath) || FILENAME_LANGUAGES[base] || "";
+  const key =
+    FILENAME_LANGUAGES[base] || prefixLanguage(base) || extensionOf(filePath) || "";
   const loader = LANGUAGE_LOADERS[key];
   if (!loader) return null;
   try {

@@ -13,7 +13,7 @@ import { useSummaryStore } from "@renderer/store/summary";
 import { AGENT_META } from "@renderer/util/agents";
 import { sessionDisplayName } from "@renderer/util/sessionName";
 import type { TerminalSession } from "@renderer/type/terminal";
-import { ChevronLeft, ChevronRight, LayoutGrid, ArrowRight } from "lucide-vue-next";
+import { ChevronLeft, ChevronRight, LayoutGrid, ArrowRight, SquareTerminal, FolderOpen, StickyNote } from "lucide-vue-next";
 import TerminalNode from "./TerminalNode.vue";
 import GroupNode from "./GroupNode.vue";
 import StickyNoteNode from "./StickyNoteNode.vue";
@@ -25,6 +25,38 @@ const workspaceStore = useWorkspaceStore();
 const uiStore = useUIStore();
 const promptStore = usePromptStore();
 const summaryStore = useSummaryStore();
+
+// ─── Empty-canvas start panel ──────────────────────────────────────
+const modKeyLabel = window.api?.platform === "darwin" ? "⌘" : "Ctrl+";
+
+async function emptyNewTerminal(): Promise<void> {
+  const shellId = terminalStore.sessionDefaultShellId || workspaceStore.settings.defaultShellId;
+  const shell = terminalStore.shells.find((s) => s.id === shellId);
+  if (shell) {
+    await terminalStore.createSession({ shellId: shell.id, cols: 80, rows: 24 });
+  } else {
+    uiStore.openNewTerminalDialog();
+  }
+}
+
+function emptyNewTerminalInFolder(): void {
+  uiStore.openNewTerminalDialog();
+}
+
+function emptyNewNote(): void {
+  const size = { width: 200, height: 160 };
+  const rect = rootEl.value?.getBoundingClientRect();
+  const center = rect
+    ? screenToFlowCoordinate({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+    : { x: 0, y: 0 };
+  workspaceStore.createStickyNote({
+    x: center.x - size.width / 2,
+    y: center.y - size.height / 2,
+    width: size.width,
+    height: size.height,
+  });
+  uiStore.showToast("Sticky note added");
+}
 
 // ─── Zoomed-in hovered-terminal info popup ────────────────────────
 // Complements the on-node hover preview (which only appears when zoomed OUT):
@@ -74,20 +106,30 @@ const showZoomedInPopup = computed(() => {
   return !!hoveredSession.value && z >= 0.75 && z < 1.05;
 });
 
+/**
+ * The card shrinks as you close in. Across the narrow band it lives in
+ * (0.75 -> 1.05) the ramp has to be steep to be visible at all: full size at
+ * the far end, ~0.8 at the near end, where the node's own header is already
+ * legible and the card is mostly a reminder.
+ */
+const hoveredInfoScale = computed(() => {
+  const z = workspaceStore.viewport.zoom;
+  const t = Math.min(1, Math.max(0, (z - 0.75) / 0.3));
+  return (1 - t * 0.2).toFixed(3);
+});
+
 // Vue Flow's Background/MiniMap take plain color props (not CSS custom
 // properties resolved through style), so they need theme-reactive JS values
-// rather than var(--tc-...) references.
-// Previous shades (#d6d3e6 light / #2a2a40 dark) sat only ~15-20 RGB levels
-// off the canvas background (#f4f3fa / #1a1a2e), which rendered as a barely-
-// visible haze rather than a legible grid, especially at 1px dot size on
-// non-retina displays. Bumped contrast and dot size below.
-const dotColor = computed(() => (uiStore.resolvedTheme === "light" ? "#bcb6d9" : "#43436a"));
+// rather than var(--tc-...) references. Same hue-43 neutral family as
+// --tc-bg-primary, just stepped enough away from it to read as a legible
+// grid rather than a haze at 1px dot size on non-retina displays.
+const dotColor = computed(() => (uiStore.resolvedTheme === "light" ? "hsl(40, 20%, 78%)" : "hsl(40, 15%, 24%)"));
 const minimapMaskColor = computed(() =>
-  uiStore.resolvedTheme === "light" ? "rgba(244, 243, 250, 0.7)" : "rgba(26, 26, 46, 0.7)"
+  uiStore.resolvedTheme === "light" ? "hsla(43, 30%, 97%, 0.7)" : "hsla(43, 28%, 5%, 0.7)"
 );
 // A bright, theme-independent highlight for the node currently hovered (in the
 // sidebar Layers list or on the canvas) so it's easy to locate on the minimap.
-const MINIMAP_HIGHLIGHT = "#ffcf4d";
+const MINIMAP_HIGHLIGHT = "hsl(38, 92%, 62%)";
 // NB: both of these read uiStore.minimapHighlightId / resolvedTheme in the
 // computed BODY (not only inside the returned closure) so the computed itself
 // depends on them -- otherwise MiniMap would keep calling a stale function and
@@ -97,19 +139,20 @@ const minimapNodeColor = computed(() => {
   const light = uiStore.resolvedTheme === "light";
   return (node: Node) => {
     if (node.id === highlight) return MINIMAP_HIGHLIGHT;
-    if (node.type === "group") return "rgba(78, 204, 163, 0.35)";
-    if (node.type === "note") return light ? "#f0d878" : "#7a6a2a";
-    if (node.type === "file") return light ? "#5f9ed6" : "#64b5f6";
+    if (node.type === "group") return "hsla(152, 62%, 45%, 0.35)";
+    if (node.type === "note") return light ? "hsl(43, 55%, 70%)" : "hsl(43, 45%, 24%)";
+    if (node.type === "file") return light ? "hsl(203, 65%, 55%)" : "hsl(199, 88%, 58%)";
     // Terminal nodes get a bright, high-contrast fill so they read clearly
-    // against the minimap's own background at a glance.
-    return light ? "#8a7fc2" : "#e94560";
+    // against the minimap's own background at a glance -- the same accent
+    // hue as everywhere else, just resolved per theme.
+    return light ? "hsl(221, 88%, 45%)" : "hsl(218, 94%, 51%)";
   };
 });
 // node-stroke-color only accepts a plain string (unlike node-color, which can
 // be a per-node function), so the hovered-item highlight rides entirely on the
 // bright fill from minimapNodeColor above.
 const minimapStrokeColor = computed(() =>
-  uiStore.resolvedTheme === "light" ? "#6b5fb8" : "#ff6b81"
+  uiStore.resolvedTheme === "light" ? "hsl(221, 80%, 55%)" : "hsl(218, 96%, 61%)"
 );
 
 // --- Figma-like Pan / Select State --------------------------------
@@ -238,12 +281,13 @@ const groupNodes = computed<Node[]>(() =>
  * Connection colors are derived from what's at each end rather than stored on
  * the edge, so an edge can't drift out of sync with the nodes it joins. A
  * terminal-to-terminal link ("these two sessions are related") reads in the
- * accent; a terminal-to-file link ("this file came out of that session") reads
- * in the same blue the file nodes use on the minimap, so the pairing is legible
- * at a glance without a legend.
+ * accent (azure); a terminal-to-file link ("this file came out of that
+ * session") reads in --tc-info (cyan-blue) -- the same color the file nodes
+ * use on the minimap -- so the pairing is legible at a glance without a
+ * legend even though both are now in the "cool" half of the palette.
  */
-const TERMINAL_LINK_COLOR = "#e94560";
-const FILE_LINK_COLOR = "#64b5f6";
+const TERMINAL_LINK_COLOR = "hsl(218, 94%, 51%)";
+const FILE_LINK_COLOR = "hsl(199, 88%, 58%)";
 
 function edgeColor(source: string, target: string): string {
   const fileIds = new Set(workspaceStore.fileNodes.map((f) => f.id));
@@ -264,6 +308,11 @@ const allEdges = computed(() =>
       // Selection has to be visible for "click the link, press Delete" to be a
       // discoverable way to break one.
       selectable: true,
+      // Renders Vue Flow's built-in edge-updater dots at both ends (see the
+      // .vue-flow__edgeupdater rule below) -- grab one and drag it into empty
+      // space to disconnect (handleEdgeUpdateEnd), or onto a different node's
+      // handle to re-point the link there (handleEdgeUpdate).
+      updatable: true,
       data: { color },
     };
   })
@@ -390,6 +439,9 @@ watch(
     terminals: Array.from(terminalStore.selectedTerminalIds).sort().join(","),
     notes: Array.from(workspaceStore.selectedNoteIds).sort().join(","),
     groups: Array.from(workspaceStore.selectedGroupIds).sort().join(","),
+    // Files belong here too: selecting an editor row in the Layers tree writes
+    // to the store, and without this the canvas never reflects it.
+    files: Array.from(workspaceStore.selectedFileIds).sort().join(","),
   }),
   () => {
     const vfSelected = new Set(getSelectedNodes.value.map((n) => n.id));
@@ -397,6 +449,7 @@ watch(
       ...terminalStore.selectedTerminalIds,
       ...workspaceStore.selectedNoteIds,
       ...workspaceStore.selectedGroupIds,
+      ...workspaceStore.selectedFileIds,
     ]);
 
     // Same selection — Vue Flow initiated this change, don't sync back
@@ -505,16 +558,26 @@ function resetGroupDrag(): void {
 }
 
 /**
- * Every node reachable from `startId` by following edges, excluding itself.
+ * Every node reachable from `startId` by following cohesive edges, excluding
+ * itself.
  *
- * Connections are meant to read as "these belong together", so dragging one end
- * brings the whole connected cluster along -- a terminal and the files pulled
- * out of it stay side by side instead of drifting apart. Breaking the edge
+ * A hand-drawn terminal-to-terminal link means "these belong together", so
+ * dragging one end brings the whole connected cluster along. Breaking the edge
  * (select it and press Delete) is how you opt out.
+ *
+ * Edges touching a file node are deliberately NOT cohesive. Those are drawn
+ * automatically the moment a file is dragged out of a terminal (see
+ * handleCanvasDrop) -- nobody asked for them, so they record provenance
+ * ("this editor came out of that session") rather than gluing the two
+ * together. The line stays; the editor moves on its own.
  */
 function collectLinkedNodes(startId: string): string[] {
   const edges = workspaceStore.edges;
   if (edges.length === 0) return [];
+
+  const fileIds = new Set(workspaceStore.fileNodes.map((f) => f.id));
+  const cohesive = edges.filter((e) => !fileIds.has(e.source) && !fileIds.has(e.target));
+  if (cohesive.length === 0) return [];
 
   const seen = new Set<string>([startId]);
   const queue = [startId];
@@ -522,7 +585,7 @@ function collectLinkedNodes(startId: string): string[] {
 
   while (queue.length > 0) {
     const current = queue.shift() as string;
-    for (const edge of edges) {
+    for (const edge of cohesive) {
       const neighbour =
         edge.source === current ? edge.target : edge.target === current ? edge.source : null;
       if (!neighbour || seen.has(neighbour)) continue;
@@ -534,36 +597,94 @@ function collectLinkedNodes(startId: string): string[] {
   return found;
 }
 
-/** Apply a delta to a node of any type, reading its latest stored position. */
-function nudgeNode(id: string, dx: number, dy: number): void {
-  const session = terminalStore.sessions.get(id);
-  if (session) {
-    terminalStore.updateNode(id, { x: session.node.x + dx, y: session.node.y + dy });
+/**
+ * Move a node *live*, during an in-progress drag, without touching the
+ * workspace store.
+ *
+ * Vue Flow's `:nodes` prop is two-way bound (see its `useWatchProps`): any
+ * store mutation that changes the array we pass in makes Vue Flow re-sync its
+ * whole internal node list from that array. That's exactly what a cohesion
+ * nudge did every frame -- and since the node actually being dragged only has
+ * its *final* position committed to the store at drag-stop (Vue Flow tracks
+ * it internally in the meantime), that resync stomped the in-progress drag
+ * position back to its stale, pre-drag value on every single frame. The
+ * dragged node would freeze/jitter while the *other* end of the link visibly
+ * moved -- "moving the file node instead moves the terminal".
+ *
+ * The fix: while the drag is live, move linked/sibling/group-frame nodes
+ * through Vue Flow's own node lookup (the same object its drag code mutates
+ * internally), which repaints them immediately but never touches our store,
+ * so the prop array never changes shape mid-drag. `commitNodePosition` below
+ * writes the real, final position to the store exactly once, at drag-stop.
+ */
+function nudgeNodeLive(id: string, dx: number, dy: number): void {
+  const n = getNode.value(id);
+  if (!n) return;
+  n.position = { x: n.position.x + dx, y: n.position.y + dy };
+}
+
+/** Write a node's current (Vue-Flow-tracked) position back to whichever store owns it. */
+function commitNodePosition(id: string): void {
+  const n = getNode.value(id);
+  if (!n) return;
+  const { x, y } = n.position;
+  if (terminalStore.sessions.has(id)) {
+    terminalStore.updateNode(id, { x, y });
     return;
   }
-  const file = workspaceStore.fileNodes.find((f) => f.id === id);
-  if (file) {
-    workspaceStore.updateFileNode(id, { x: file.x + dx, y: file.y + dy });
+  if (workspaceStore.fileNodes.some((f) => f.id === id)) {
+    workspaceStore.updateFileNode(id, { x, y });
     return;
   }
-  const note = workspaceStore.stickyNotes.find((n) => n.id === id);
-  if (note) {
-    workspaceStore.updateStickyNote(id, { x: note.x + dx, y: note.y + dy });
+  if (workspaceStore.stickyNotes.some((note) => note.id === id)) {
+    workspaceStore.updateStickyNote(id, { x, y });
+    return;
+  }
+  if (workspaceStore.groups.some((g) => g.id === id)) {
+    workspaceStore.updateGroup(id, { x, y });
   }
 }
 
-function handleNodeDragStart({ node }: { node: Node }): void {
+/**
+ * Option/Alt-drag duplicates a terminal, Figma-style: the original stays
+ * exactly where it was and a copy appears where you let go.
+ *
+ * Alt is the only modifier free to mean this -- Ctrl, Meta and Shift are all
+ * bound to multi-selection on the pane (see :multi-selection-key-code), and Alt
+ * is also what Figma itself uses for duplicate-drag, so the gesture transfers.
+ *
+ * Implemented as "let the real node drag, then snap it back and create the copy
+ * at the drop point" rather than by dragging a clone: a terminal is a live PTY,
+ * and the session the user was watching must not be the one that moves.
+ */
+let duplicateDrag: { id: string; x: number; y: number } | null = null;
+
+function handleNodeDragStart({ node, nodes, event }: { node: Node; nodes: Node[]; event: MouseEvent | TouchEvent }): void {
   resetGroupDrag();
 
-  // A multi-node selection drag is handled by Vue Flow (it moves every
-  // selected node) + onSelectionDragStop -- don't also apply cohesion there,
-  // or members could be moved twice.
-  const inMultiDrag =
-    terminalStore.selectedTerminalIds.size > 1 && terminalStore.selectedTerminalIds.has(node.id);
-  if (inMultiDrag) return;
+  duplicateDrag =
+    node.type === "terminal" &&
+    (nodes?.length ?? 1) <= 1 &&
+    "altKey" in event &&
+    event.altKey
+      ? { id: node.id, x: node.position.x, y: node.position.y }
+      : null;
+
+  // `nodes` is every node Vue Flow is moving this drag -- one for a plain
+  // drag, all of them for a shift-selection or rubber-band drag. Vue Flow
+  // moves those itself, so cohesion must only pull in nodes *outside* the
+  // drag set or they get the delta twice and land at double the distance.
+  const dragging = nodes?.length ? nodes : [node];
+  const draggingIds = new Set(dragging.map((n) => n.id));
 
   groupDragLast = { x: node.position.x, y: node.position.y };
-  linkedDragIds = collectLinkedNodes(node.id);
+  linkedDragIds = [
+    ...new Set(dragging.flatMap((n) => collectLinkedNodes(n.id))),
+  ].filter((id) => !draggingIds.has(id));
+
+  // Group cohesion stays a single-node gesture: dragging a whole selection
+  // that happens to contain grouped terminals already moves them directly.
+  if (draggingIds.size > 1) return;
 
   if (node.type !== "terminal") return;
   const session = terminalStore.sessions.get(node.id);
@@ -586,21 +707,47 @@ function handleNodeDrag({ node }: { node: Node }): void {
   groupDragLast = { x: node.position.x, y: node.position.y };
 
   // Linked nodes travel with whatever they're connected to.
-  for (const id of linkedDragIds) nudgeNode(id, dx, dy);
+  for (const id of linkedDragIds) nudgeNodeLive(id, dx, dy);
 
   if (!groupDragId) return;
 
-  // Move sibling terminals live, reading each one's latest position so the
-  // deltas accumulate correctly frame to frame.
-  for (const id of groupDragSiblings) nudgeNode(id, dx, dy);
+  // Move sibling terminals live.
+  for (const id of groupDragSiblings) nudgeNodeLive(id, dx, dy);
   // Move member notes live.
-  for (const id of groupDragNotes) nudgeNode(id, dx, dy);
+  for (const id of groupDragNotes) nudgeNodeLive(id, dx, dy);
   // Move the group frame itself so it stays wrapped around its contents.
-  const g = workspaceStore.groups.find((gg) => gg.id === groupDragId);
-  if (g) workspaceStore.updateGroup(groupDragId, { x: g.x + dx, y: g.y + dy });
+  nudgeNodeLive(groupDragId, dx, dy);
 }
 
-function handleNodeDragStop({ node }: { node: Node }): void {
+function handleNodeDragStop({ node, nodes }: { node: Node; nodes: Node[] }): void {
+  // Option-drag: put the original back and spawn the copy where it was dropped.
+  // Returns early -- none of the normal move bookkeeping applies to a node that
+  // didn't actually move.
+  if (duplicateDrag && duplicateDrag.id === node.id) {
+    const { x, y } = duplicateDrag;
+    const dropped = { x: node.position.x, y: node.position.y };
+    duplicateDrag = null;
+    node.position = { x, y };
+    terminalStore.updateNode(node.id, { x, y });
+    resetGroupDrag();
+    void terminalStore.duplicateSession(node.id, dropped).then((copy) => {
+      if (copy) uiStore.showToast(`Duplicated as ${copy.manualName ?? copy.name}`);
+    });
+    return;
+  }
+  duplicateDrag = null;
+
+  // Linked nodes were only moved live inside Vue Flow during the drag (see
+  // nudgeNodeLive) -- write their real final position to the store now, once.
+  for (const id of linkedDragIds) commitNodePosition(id);
+
+  // Everything else Vue Flow moved in this drag. Shift-clicking several nodes
+  // and dragging one of them only ever committed the grabbed node, so the
+  // rest snapped back to their old positions on the next store-driven render.
+  for (const n of nodes ?? []) {
+    if (n.id !== node.id) commitNodePosition(n.id);
+  }
+
   if (node.type === "terminal") {
     const session = terminalStore.sessions.get(node.id);
     const oldX = session?.node.x ?? node.position.x;
@@ -631,6 +778,14 @@ function handleNodeDragStop({ node }: { node: Node }): void {
           });
         }
       }
+    }
+    // Same as linkedDragIds above: siblings, member notes and the group
+    // frame were only moved live inside Vue Flow -- commit their real final
+    // position to the store now that the drag is done.
+    if (groupDragId) {
+      for (const id of groupDragSiblings) commitNodePosition(id);
+      for (const id of groupDragNotes) commitNodePosition(id);
+      commitNodePosition(groupDragId);
     }
     resetGroupDrag();
   } else if (node.type === "group") {
@@ -666,6 +821,84 @@ function handleConnect(params: { source: string; target: string }): void {
  * they just drew, so the direct gesture exists as well.
  */
 function handleEdgeDoubleClick({ edge }: { edge: { id: string } }): void {
+  workspaceStore.removeEdge(edge.id);
+  uiStore.showToast("Link removed");
+}
+
+/**
+ * Edge-updater dots (rendered at both ends of a link via Vue Flow's built-in
+ * `updatable` edges, styled in <style> below as small draggable circles):
+ * grab one and drag it onto a different node to re-point the link there, or
+ * drag it into empty space to disconnect -- the standard way node-graph
+ * editors let you break a connection without hunting for a double-click
+ * target on a thin line.
+ *
+ * Vue Flow only fires `edge-update` when the drag ends on a *valid* new
+ * target; `edge-update-end` fires unconditionally on mouse-up. So: assume
+ * failure at drag-start, flip the flag inside the success handler, and if
+ * it's still unset by the time the drag ends, that was a drop into empty
+ * space -- remove the edge.
+ */
+let edgeUpdateSucceeded = false;
+// Where the endpoint drag began, so a click can be told apart from a drag.
+let edgeUpdateStart: { x: number; y: number } | null = null;
+
+// A mouseup this close to the mousedown is a click, not a drop into empty
+// space -- and a click must never silently delete a link.
+const EDGE_UPDATE_CLICK_SLOP = 4;
+
+/** Screen coordinates of a pointer event, whether it came from mouse or touch. */
+function pointerXY(event: MouseEvent | TouchEvent): { x: number; y: number } | null {
+  if ("clientX" in event) return { x: event.clientX, y: event.clientY };
+  const touch = event.changedTouches?.[0] ?? event.touches?.[0];
+  return touch ? { x: touch.clientX, y: touch.clientY } : null;
+}
+
+function handleEdgeUpdateStart({ event }: { event: MouseEvent | TouchEvent }): void {
+  edgeUpdateSucceeded = false;
+  edgeUpdateStart = pointerXY(event);
+}
+
+function handleEdgeUpdate({
+  edge,
+  connection,
+}: {
+  edge: { id: string; label?: unknown };
+  connection: { source: string | null; target: string | null };
+}): void {
+  // Set before the self-link guard: any drop Vue Flow accepted counts as
+  // handled, so bailing out here leaves the original link intact instead of
+  // letting handleEdgeUpdateEnd treat it as a drop into nowhere and delete it.
+  edgeUpdateSucceeded = true;
+  const { source, target } = connection;
+  if (!source || !target || source === target) return;
+  workspaceStore.removeEdge(edge.id);
+  // Carry the label across -- re-adding without it silently dropped the link's
+  // label on every successful reconnect.
+  workspaceStore.addEdge({
+    source,
+    target,
+    label: typeof edge.label === "string" ? edge.label : undefined,
+  });
+}
+
+function handleEdgeUpdateEnd({
+  edge,
+  event,
+}: {
+  edge: { id: string };
+  event: MouseEvent | TouchEvent;
+}): void {
+  const start = edgeUpdateStart;
+  edgeUpdateStart = null;
+  if (edgeUpdateSucceeded) return;
+
+  // Deleting persisted workspace data with no undo needs a deliberate gesture.
+  const end = pointerXY(event);
+  if (start && end) {
+    if (Math.hypot(end.x - start.x, end.y - start.y) < EDGE_UPDATE_CLICK_SLOP) return;
+  }
+
   workspaceStore.removeEdge(edge.id);
   uiStore.showToast("Link removed");
 }
@@ -742,8 +975,12 @@ onSelectionDragStop(({ nodes }) => {
         });
       }
     }
-    for (const linkedId of collectLinkedNodes(id)) nudgeNode(linkedId, dx, dy);
   }
+  // Link cohesion is deliberately NOT applied here. Vue Flow's NodesSelection
+  // emits nodeDragStart/nodeDrag/nodeDragStop alongside the selection events,
+  // so the node-drag handlers above have already nudged and committed every
+  // linked node exactly once. Re-applying the delta here moved them twice --
+  // a linked file node dragged 300px landed 600px away.
 });
 
 // --- Keyboard Shortcuts -------------------------------------------
@@ -821,16 +1058,14 @@ function handleKeyDown(e: KeyboardEvent): void {
       workspaceStore.removeEdge(id);
     }
 
-    for (const id of selectedTerminals) {
-      terminalStore.killSession(id);
-      terminalStore.removeSession(id);
-      workspaceStore.removeEdgesForTerminal(id);
-      workspaceStore.unpinNotesForTerminal(id);
-      // The file stays on the canvas -- it's still a real file worth reading --
-      // it just stops travelling with a terminal that no longer exists.
-      workspaceStore.unpinFilesForTerminal(id);
-      fileStore.clearForTerminal(id);
-    }
+    // Deleting terminals can discard unsaved file edits, so it goes through the
+    // same guarded close as every other teardown path. Fire-and-forget is fine
+    // here: the rest of the Delete branch only touches notes, files and groups.
+    void (async () => {
+      for (const id of selectedTerminals) {
+        await terminalStore.closeSession(id);
+      }
+    })();
     terminalStore.clearSelection();
 
     for (const id of selectedNotes) {
@@ -883,14 +1118,46 @@ function centerOnTerminal(session: TerminalSession): void {
   workspaceStore.clearGroupSelection();
 }
 
-// Stable ordering for prev/next: top-to-bottom, then left-to-right, so
-// stepping follows the visual layout rather than creation order.
-const orderedTerminals = computed(() =>
-  [...terminalStore.allSessions].sort((a, b) => {
+/**
+ * Stepping order for the prev/next arrows: project folder first, position
+ * second.
+ *
+ * Terminals are bucketed by working directory -- the same key arrangeByPath
+ * buckets on -- so stepping walks every terminal in one project before moving
+ * to the next, instead of zig-zagging between projects because two unrelated
+ * terminals happen to sit at a similar y. After Arrange this matches the
+ * columns it just produced exactly: buckets ordered by their leftmost member,
+ * top-to-bottom inside each. Before Arrange it still holds, since the ordering
+ * is derived from live positions rather than from having run Arrange.
+ */
+const orderedTerminals = computed(() => {
+  const buckets = new Map<string, TerminalSession[]>();
+  for (const s of terminalStore.allSessions) {
+    const key = s.cwd || "~";
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(s);
+    else buckets.set(key, [s]);
+  }
+
+  const byPosition = (a: TerminalSession, b: TerminalSession) => {
     if (Math.abs(a.node.y - b.node.y) > 40) return a.node.y - b.node.y;
     return a.node.x - b.node.x;
-  })
-);
+  };
+
+  return [...buckets.values()]
+    .map((list) => [...list].sort(byPosition))
+    .sort((a, b) => {
+      const leftA = Math.min(...a.map((s) => s.node.x));
+      const leftB = Math.min(...b.map((s) => s.node.x));
+      if (leftA !== leftB) return leftA - leftB;
+      return Math.min(...a.map((s) => s.node.y)) - Math.min(...b.map((s) => s.node.y));
+    })
+    .flat();
+});
+
+// The nav/arrange chrome recedes once you're zoomed in and working inside a
+// terminal, and comes back to full strength on hover.
+const navPanelFaded = computed(() => workspaceStore.viewport.zoom >= 1);
 
 /**
  * Double-clicking a terminal on the canvas while zoomed out zooms/pans to it
@@ -1105,10 +1372,18 @@ function handleCanvasDrop(event: DragEvent): void {
   const sourceTerminalId = event.dataTransfer?.getData("application/x-cate-file-terminal") || null;
   const position = screenToFlowCoordinate({ x: event.clientX, y: event.clientY });
 
+  // Land at the height of the terminal it came out of, so the editor reads as
+  // that session's file rather than an arbitrarily-sized card next to it. The
+  // floor is NodeResizer's own min-height -- matching a terminal that has been
+  // squashed below that would create a node the user can't shrink back into.
+  const source = sourceTerminalId ? terminalStore.sessions.get(sourceTerminalId) : undefined;
+  const height = source?.node.height ? Math.max(source.node.height, 180) : undefined;
+
   const created = workspaceStore.createFileNode({
     path,
     x: position.x,
     y: position.y,
+    height,
     pinnedToTerminalId: sourceTerminalId,
   });
   if (!created) return;
@@ -1181,6 +1456,9 @@ onUnmounted(() => {
     @node-double-click="handleNodeDoubleClick"
     @connect="handleConnect"
     @edge-double-click="handleEdgeDoubleClick"
+    @edge-update-start="handleEdgeUpdateStart"
+    @edge-update="handleEdgeUpdate"
+    @edge-update-end="handleEdgeUpdateEnd"
     @viewport-change="handleViewportChange"
   >
     <!-- Dotted background grid -->
@@ -1191,40 +1469,45 @@ onUnmounted(() => {
       :color="dotColor"
     />
 
-    <!-- Zoom controls -->
-    <Controls />
-
-    <!-- Mini map for navigation -->
-    <MiniMap
-      pannable
-      zoomable
-      :width="140"
-      :height="100"
-      :node-color="minimapNodeColor"
-      :node-stroke-color="minimapStrokeColor"
-      :node-stroke-width="2"
-      :node-border-radius="3"
-      :mask-color="minimapMaskColor"
-      :mask-stroke-color="minimapStrokeColor"
-      :mask-stroke-width="1.5"
-      class="canvas-minimap"
-    />
-
-    <!-- Status overlay panel -->
-    <Panel position="top-left" class="canvas-status-panel">
-      <span class="canvas-status-text">
-        {{ terminalStore.sessionCount }} terminal(s)
-        <span v-if="terminalStore.runningSessions.length > 0" class="canvas-status-running">
-          &bull; {{ terminalStore.runningSessions.length }} running
-        </span>
-      </span>
+    <!-- Navigation cluster: minimap and zoom controls share the bottom-left
+         corner as one unit, so "where am I / change what I can see" is a single
+         place to look instead of two opposite corners. Both are nested inside
+         one Panel and un-absoluted in CSS; the zoom column sits to the right of
+         the minimap and slides into the corner on its own when the minimap is
+         turned off. The interactive ("lock") toggle stays absent: it froze node
+         dragging with no visible state anywhere, so the only way to discover
+         you'd hit it was that the canvas stopped responding. -->
+    <Panel position="bottom-left" class="canvas-nav-cluster">
+      <!-- Zoom column first (hard against the corner) so the minimap, which
+           scales up on hover, grows right into open canvas instead of over the
+           buttons. -->
+      <Controls :show-interactive="false" />
+      <MiniMap
+        v-if="uiStore.minimapVisible"
+        pannable
+        zoomable
+        :width="140"
+        :height="100"
+        :node-color="minimapNodeColor"
+        :node-stroke-color="minimapStrokeColor"
+        :node-stroke-width="2"
+        :node-border-radius="3"
+        :mask-color="minimapMaskColor"
+        :mask-stroke-color="minimapStrokeColor"
+        :mask-stroke-width="1.5"
+        class="canvas-minimap"
+      />
     </Panel>
 
     <!-- Navigate / arrange controls -->
-    <Panel position="top-right" class="canvas-nav-panel">
+    <Panel
+      position="top-right"
+      class="canvas-nav-panel"
+      :class="{ 'canvas-nav-faded': navPanelFaded }"
+    >
       <button
         class="canvas-nav-btn"
-        title="Previous terminal"
+        title="Previous terminal in this project folder"
         :disabled="terminalStore.sessionCount === 0"
         @click="navToTerminal(-1)"
       >
@@ -1232,7 +1515,7 @@ onUnmounted(() => {
       </button>
       <button
         class="canvas-nav-btn"
-        title="Next terminal"
+        title="Next terminal in this project folder"
         :disabled="terminalStore.sessionCount === 0"
         @click="navToTerminal(1)"
       >
@@ -1271,7 +1554,11 @@ onUnmounted(() => {
          pinned to the canvas corner so it's readable and never obstructed by
          the nodes themselves. -->
     <Transition name="hover-popup">
-      <div v-if="showZoomedInPopup" class="hovered-info-popup">
+      <div
+        v-if="showZoomedInPopup"
+        class="hovered-info-popup"
+        :style="{ '--popup-scale': hoveredInfoScale }"
+      >
         <div class="hovered-info-name">
           <span
             v-if="hoveredAgentColor"
@@ -1286,6 +1573,59 @@ onUnmounted(() => {
         <div v-else class="hovered-info-cmd hovered-info-empty">No commands yet</div>
       </div>
     </Transition>
+
+    <!-- Empty-canvas start panel: shown until the first terminal exists, so a
+         fresh workspace teaches its own controls instead of showing a blank
+         dotted plane. Disappears the moment allSessions is non-empty and
+         never comes back for this workspace (nothing to dismiss/remember). -->
+    <!-- Only when the canvas is empty of *everything*. Gating on terminals
+         alone left this card sitting over the middle of a populated canvas,
+         swallowing clicks -- and its own "new note" action placed the note
+         at the viewport centre, directly underneath it. -->
+    <div
+      v-if="
+        terminalStore.allSessions.length === 0 &&
+        workspaceStore.stickyNotes.length === 0 &&
+        workspaceStore.fileNodes.length === 0 &&
+        workspaceStore.groups.length === 0
+      "
+      class="canvas-empty"
+    >
+      <div class="canvas-empty-card">
+        <SquareTerminal class="canvas-empty-icon" :size="30" />
+        <h2 class="canvas-empty-title">Terminal Canvas</h2>
+        <p class="canvas-empty-subtitle">Infinite canvas for coding-agent terminals</p>
+
+        <div class="canvas-empty-section">
+          <span class="canvas-empty-label">Start</span>
+          <button class="canvas-empty-action" @click="emptyNewTerminal">
+            <SquareTerminal :size="15" />
+            <span>New Terminal</span>
+            <kbd>{{ modKeyLabel }}N</kbd>
+          </button>
+          <button class="canvas-empty-action" @click="emptyNewTerminalInFolder">
+            <FolderOpen :size="15" />
+            <span>New Terminal in Folder…</span>
+          </button>
+          <button class="canvas-empty-action" @click="emptyNewNote">
+            <StickyNote :size="15" />
+            <span>Add Sticky Note</span>
+          </button>
+        </div>
+
+        <div class="canvas-empty-section">
+          <span class="canvas-empty-label">Keyboard shortcuts</span>
+          <div class="canvas-empty-shortcuts">
+            <div class="canvas-empty-shortcut"><kbd>{{ modKeyLabel }}N</kbd><span>New Terminal</span></div>
+            <div class="canvas-empty-shortcut"><kbd>{{ modKeyLabel }}S</kbd><span>Save Workspace</span></div>
+            <div class="canvas-empty-shortcut"><kbd>{{ modKeyLabel }}⇧P</kbd><span>Command Palette</span></div>
+            <div class="canvas-empty-shortcut"><kbd>{{ modKeyLabel }}⇧F</kbd><span>Focus Mode</span></div>
+            <div class="canvas-empty-shortcut"><kbd>{{ modKeyLabel }}G</kbd><span>Group Selected</span></div>
+            <div class="canvas-empty-shortcut"><kbd>{{ modKeyLabel }}0</kbd><span>Reset Zoom</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1302,12 +1642,154 @@ onUnmounted(() => {
   background: var(--tc-bg-primary);
 }
 
+/* ─── Empty-canvas start panel ─────────────────────────────────── */
+.canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.canvas-empty-card {
+  pointer-events: auto;
+  width: 360px;
+  max-width: calc(100vw - 48px);
+  padding: 28px 26px 22px;
+  border-radius: calc(var(--tc-border-radius) * 2);
+  border: 1px solid var(--tc-border-color);
+  background: var(--tc-hero-glow), var(--tc-bg-card);
+  background-repeat: no-repeat;
+  box-shadow: var(--tc-shadow-lg);
+  text-align: center;
+}
+
+.canvas-empty-icon {
+  color: var(--tc-accent);
+  margin-bottom: 10px;
+}
+
+.canvas-empty-title {
+  font-size: var(--tc-font-size-lg);
+  font-weight: 700;
+  color: var(--tc-text-primary);
+  margin: 0 0 4px;
+}
+
+.canvas-empty-subtitle {
+  font-size: var(--tc-font-size-sm);
+  color: var(--tc-text-muted);
+  margin: 0 0 22px;
+}
+
+.canvas-empty-section {
+  text-align: left;
+  margin-top: 18px;
+}
+
+.canvas-empty-section:first-of-type {
+  margin-top: 0;
+}
+
+.canvas-empty-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tc-text-muted);
+  margin-bottom: 8px;
+}
+
+.canvas-empty-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--tc-border-radius-sm);
+  background: transparent;
+  color: var(--tc-text-primary);
+  font-size: var(--tc-font-size-sm);
+  font-family: var(--tc-font-sans);
+  cursor: pointer;
+  transition: background var(--tc-transition-fast);
+}
+
+.canvas-empty-action:hover {
+  background: var(--tc-bg-hover);
+}
+
+.canvas-empty-action svg {
+  color: var(--tc-accent);
+  flex-shrink: 0;
+}
+
+.canvas-empty-action span {
+  flex: 1;
+  text-align: left;
+}
+
+.canvas-empty-action kbd {
+  font-family: var(--tc-font-mono);
+  font-size: 10px;
+  color: var(--tc-text-muted);
+  background: var(--tc-bg-secondary);
+  border: 1px solid var(--tc-border-color);
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+
+.canvas-empty-shortcuts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 14px;
+}
+
+.canvas-empty-shortcut {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--tc-font-size-xs);
+  color: var(--tc-text-secondary);
+}
+
+.canvas-empty-shortcut kbd {
+  font-family: var(--tc-font-mono);
+  font-size: 10px;
+  color: var(--tc-text-secondary);
+  background: var(--tc-bg-secondary);
+  border: 1px solid var(--tc-border-color);
+  padding: 2px 5px;
+  border-radius: 4px;
+  min-width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
 /* Lift a hovered terminal above its neighbours so its hover-detail card (which
    overflows the node's top edge) is never clipped or covered by an adjacent
    terminal sitting in front of it. !important overrides Vue Flow's inline
    per-node z-index; scoped to terminal nodes so groups/notes don't jump. */
 .workspace-canvas :deep(.vue-flow__node-terminal:hover) {
   z-index: 1000 !important;
+}
+
+/* A file dragged out of a terminal sits ON TOP of every terminal, always --
+   including a hovered or selected one (both of which sit at 1000 above).
+   Detaching an editor is an explicit "I want to read this next to the
+   session", and it landing behind the terminal it came from read as the drag
+   having failed. Trade-off accepted: an editor overlapping a hovered terminal
+   now covers that terminal's hover card. */
+.workspace-canvas :deep(.vue-flow__node-file) {
+  z-index: 1100 !important;
+}
+
+.workspace-canvas :deep(.vue-flow__node-file.selected) {
+  z-index: 1200 !important;
 }
 
 /* Placement pointer (arrow reveal mode): a screen-space overlay, positioned
@@ -1347,33 +1829,34 @@ onUnmounted(() => {
   100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--tc-accent) 0%, transparent); }
 }
 
-.canvas-status-panel {
-  background: var(--tc-bg-card);
-  border: 1px solid var(--tc-border-color);
-  border-radius: var(--tc-border-radius-sm);
-  padding: 4px 10px;
-  pointer-events: none;
-  user-select: none;
-}
-
-/* Zoomed-in hovered-terminal info popup (upper-left of the canvas). Sits below
-   the status panel so the two never overlap. */
+/* Zoomed-in hovered-terminal info popup (upper-left of the canvas). It owns
+   that corner outright now that the terminal-count panel is gone. */
 .hovered-info-popup {
   position: absolute;
-  top: 40px;
+  top: 10px;
   left: 10px;
   z-index: 21;
   width: 232px;
   max-width: calc(100% - 20px);
   padding: 7px 10px;
-  background: var(--tc-bg-card);
-  border: 1px solid var(--tc-border-color);
-  border-left: 2px solid var(--tc-accent);
+  /* Translucent rather than solid: it floats over live terminals, and at this
+     zoom you can still read what's underneath it. The blur keeps the text
+     legible against whatever it happens to be sitting on. */
+  background: color-mix(in srgb, var(--tc-bg-card) 72%, transparent);
+  backdrop-filter: blur(6px);
+  border: 1px solid color-mix(in srgb, var(--tc-border-color) 70%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--tc-accent) 75%, transparent);
   border-radius: var(--tc-border-radius-sm);
   box-shadow: var(--tc-shadow-md);
   pointer-events: none;
   user-select: none;
-  opacity: 0.96;
+  opacity: 0.82;
+  /* Set per-render from the canvas zoom (see hoveredInfoScale). Kept as a
+     custom property so the enter/leave transition below can compose its own
+     translate with it instead of overwriting the scale. */
+  transform: scale(var(--popup-scale, 1));
+  transform-origin: top left;
+  transition: transform 120ms ease;
 }
 
 /* The terminal's name is the secondary line here -- kept small so the last
@@ -1425,7 +1908,7 @@ onUnmounted(() => {
 .hover-popup-enter-from,
 .hover-popup-leave-to {
   opacity: 0;
-  transform: translateY(-4px);
+  transform: translateY(-4px) scale(var(--popup-scale, 1));
 }
 
 .canvas-nav-panel {
@@ -1437,6 +1920,17 @@ onUnmounted(() => {
   border-radius: var(--tc-border-radius-sm);
   padding: 3px;
   box-shadow: var(--tc-shadow-sm);
+  transition: opacity var(--tc-transition-fast);
+}
+
+/* Zoomed in, this is chrome sitting over the terminal you're working in --
+   present enough to find, quiet enough to ignore, full strength on hover. */
+.canvas-nav-panel.canvas-nav-faded {
+  opacity: 0.32;
+}
+
+.canvas-nav-panel.canvas-nav-faded:hover {
+  opacity: 1;
 }
 
 .canvas-nav-btn {
@@ -1478,13 +1972,52 @@ onUnmounted(() => {
   margin: 0 2px;
 }
 
-.canvas-status-text {
-  font-size: var(--tc-font-size-xs);
-  color: var(--tc-text-muted);
+/* Navigation cluster (minimap + zoom), bottom-left. Vue Flow positions both of
+   these absolutely against the pane by default; nested inside one Panel they
+   have to be un-absoluted so the flex row can lay them out side by side. Ends
+   aligned so the short zoom column sits level with the minimap's bottom edge. */
+.canvas-nav-cluster {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
 }
 
-.canvas-status-running {
-  color: var(--tc-status-running);
+.canvas-nav-cluster :deep(.vue-flow__minimap),
+.canvas-nav-cluster :deep(.vue-flow__controls) {
+  position: relative;
+  margin: 0;
+  inset: auto;
+}
+
+.canvas-nav-cluster :deep(.vue-flow__controls) {
+  display: flex;
+  flex-direction: column;
+  background: var(--tc-bg-card);
+  border: 1px solid var(--tc-border-color);
+  border-radius: var(--tc-border-radius);
+  box-shadow: var(--tc-shadow-md);
+  overflow: hidden;
+}
+
+.canvas-nav-cluster :deep(.vue-flow__controls-button) {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--tc-border-color);
+  fill: var(--tc-text-secondary);
+  cursor: pointer;
+  transition: background var(--tc-transition-fast), fill var(--tc-transition-fast);
+}
+
+.canvas-nav-cluster :deep(.vue-flow__controls-button:last-child) {
+  border-bottom: none;
+}
+
+.canvas-nav-cluster :deep(.vue-flow__controls-button:hover) {
+  background: var(--tc-bg-hover);
+  fill: var(--tc-text-primary);
 }
 
 /* Vue Flow's minimap package hardcodes a white SVG background
@@ -1500,8 +2033,9 @@ onUnmounted(() => {
   /* Small by default (it was covering too much canvas) -- grows toward the
      canvas on hover so it's still readable when you actually need it. Scales
      via CSS transform rather than the width/height props so it stays a
-     crisp vector redraw, not a resized raster. */
-  transform-origin: bottom right;
+     crisp vector redraw, not a resized raster. Grows up-and-right from the
+     bottom-left corner it now lives in, into open canvas. */
+  transform-origin: bottom left;
   transition: transform var(--tc-transition-fast), box-shadow var(--tc-transition-fast);
 }
 
@@ -1563,5 +2097,29 @@ onUnmounted(() => {
 
 .vue-flow__edge {
   cursor: pointer;
+}
+
+/* Edge-updater dots (see `updatable: true` in allEdges) -- Vue Flow renders
+   these as invisible hit-circles by default; drawn here as small filled dots
+   so "grab this to disconnect or re-point the link" is discoverable, but
+   only revealed on hover/selection to match the rest of the canvas (no
+   permanent chrome on every idle link). */
+.vue-flow__edgeupdater {
+  fill: var(--tc-bg-card);
+  stroke: var(--tc-accent);
+  stroke-width: 2px;
+  r: 6;
+  opacity: 0;
+  transition: opacity var(--tc-transition-fast), r var(--tc-transition-fast);
+}
+
+.vue-flow__edge:hover .vue-flow__edgeupdater,
+.vue-flow__edge.selected .vue-flow__edgeupdater {
+  opacity: 1;
+}
+
+.vue-flow__edgeupdater:hover {
+  r: 8;
+  fill: var(--tc-accent);
 }
 </style>

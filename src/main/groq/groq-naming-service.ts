@@ -1,3 +1,6 @@
+import { app, safeStorage } from "electron";
+import path from "path";
+import { readFileSync, writeFileSync } from "fs";
 import { createLogger } from "../util/logger";
 import { DEFAULT_GROQ_CONFIG, type GroqConfig } from "./groq-types";
 import { redactSensitive } from "../terminal/prompt-capture";
@@ -7,13 +10,92 @@ const logger = createLogger("GroqNaming");
 
 let config: GroqConfig = { ...DEFAULT_GROQ_CONFIG };
 
+/**
+ * Where the AI-naming settings live between runs.
+ *
+ * The config used to be a module variable and nothing else, so a key entered
+ * during onboarding survived exactly as long as the process: every relaunch
+ * silently fell back to rule-based naming, and Settings showed an empty field
+ * with no explanation.
+ */
+function configPath(): string {
+  return path.join(app.getPath("userData"), "groq-config.json");
+}
+
+/**
+ * The API key is a real credential, so it is only ever written through the
+ * OS keychain (Keychain on macOS, DPAPI on Windows, libsecret on Linux).
+ * Where that isn't available, the key is deliberately NOT persisted -- it
+ * stays in memory for the session. Dropping a plaintext key into a
+ * world-readable JSON file would be a worse bug than the one this fixes.
+ */
+function encryptionAvailable(): boolean {
+  try {
+    return safeStorage.isEncryptionAvailable();
+  } catch {
+    return false;
+  }
+}
+
+export function loadGroqConfig(): void {
+  try {
+    const raw = readFileSync(configPath(), "utf-8");
+    const stored = JSON.parse(raw) as Partial<GroqConfig> & { encryptedApiKey?: string };
+
+    const { encryptedApiKey, ...rest } = stored;
+    config = { ...DEFAULT_GROQ_CONFIG, ...rest };
+
+    if (encryptedApiKey && encryptionAvailable()) {
+      try {
+        config.apiKey = safeStorage.decryptString(Buffer.from(encryptedApiKey, "base64"));
+      } catch (err) {
+        // Keychain entry from another machine or a reset login keychain.
+        logger.warn("Stored Groq key could not be decrypted; ignoring it", err);
+        config.apiKey = DEFAULT_GROQ_CONFIG.apiKey;
+      }
+    }
+    logger.info("Groq config loaded");
+  } catch {
+    // No settings file yet -- first run. Defaults (including GROQ_API_KEY from
+    // the environment) already apply.
+  }
+}
+
+function persistGroqConfig(): void {
+  try {
+    const { apiKey, ...rest } = config;
+    const payload: Record<string, unknown> = { ...rest };
+    if (apiKey && encryptionAvailable()) {
+      payload.encryptedApiKey = safeStorage.encryptString(apiKey).toString("base64");
+    }
+    writeFileSync(configPath(), JSON.stringify(payload, null, 2), { encoding: "utf-8", mode: 0o600 });
+  } catch (err) {
+    logger.error("Failed to persist Groq config", err);
+  }
+}
+
 export function getGroqConfig(): GroqConfig {
   return { ...config };
 }
 
 export function updateGroqConfig(newConfig: Partial<GroqConfig>): void {
-  config = { ...config, ...newConfig };
+  const patch = { ...newConfig };
+  // An absent or empty key means "leave it alone", never "clear it". The
+  // onboarding dialog re-sends its settings on every advance past the AI step
+  // with a blank field, which otherwise wiped a key supplied via GROQ_API_KEY
+  // within the same session. Clearing is done explicitly via clearGroqApiKey.
+  if (!patch.apiKey) delete patch.apiKey;
+
+  config = { ...config, ...patch };
+  persistGroqConfig();
   logger.info("Groq config updated");
+}
+
+/** Explicitly forget the stored key (Settings > AI > Remove key). */
+export function clearGroqApiKey(): void {
+  config = { ...config, apiKey: null };
+  persistGroqConfig();
+  logger.info("Groq API key cleared");
 }
 
 export async function generateTerminalName(
@@ -344,7 +426,7 @@ Project name: ${context.projectName || "Unknown"}
 CWD label: ${context.cwdLabel}
 Shell: ${context.shellName}
 Recent prompts/commands: ${redactedPrompts || "None yet"}
-Output preview: ${context.outputPreview.slice(0, 500)}
+Output preview: ${redactSensitive(context.outputPreview).slice(0, 500)}
 Existing title: ${context.existingTitle || "None"}
 
 Return JSON only.`;

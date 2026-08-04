@@ -1,4 +1,4 @@
-import { defineStore } from "pinia";
+import { acceptHMRUpdate, defineStore } from "pinia";
 import { ref, computed } from "vue";
 import type {
   Workspace,
@@ -13,6 +13,7 @@ import { usePromptStore } from "@renderer/store/prompt";
 import { useUIStore } from "@renderer/store/ui";
 import { useFileStore } from "@renderer/store/file";
 import { generateId } from "@renderer/util/ids";
+import { AGENT_RELAUNCH_COMMANDS } from "@renderer/util/agents";
 
 const DEFAULT_SETTINGS: WorkspaceSettings = {
   persistPromptHistory: true,
@@ -31,14 +32,14 @@ const DEFAULT_SETTINGS: WorkspaceSettings = {
 // user having to pick a color manually (color-coding was previously dead:
 // nothing ever passed `color`, so every group rendered with no color at all).
 const GROUP_COLORS = [
-  "#e94560", // accent red
-  "#4ecca3", // green
-  "#64b5f6", // blue
-  "#f9a825", // amber
-  "#e040fb", // magenta
-  "#4dd0e1", // cyan
-  "#ab47bc", // purple
-  "#ff8a65", // orange
+  "hsl(218, 94%, 51%)", // accent blue -- keep in sync with GroupNode.vue
+  "hsl(152, 62%, 45%)", // green
+  "hsl(199, 88%, 58%)", // info cyan-blue
+  "hsl(38, 92%, 56%)", // amber
+  "hsl(300, 75%, 65%)", // magenta
+  "hsl(180, 70%, 55%)", // cyan
+  "hsl(280, 60%, 62%)", // purple
+  "hsl(22, 85%, 58%)", // orange
 ];
 
 /**
@@ -51,6 +52,20 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const workspaceList = ref<WorkspaceSummary[]>([]);
   const isSaving = ref(false);
   const lastSavedAt = ref<number | null>(null);
+  // True while loadWorkspace is replaying saved terminals, so the mutations it
+  // drives don't mark the freshly-opened workspace dirty. See markDirty.
+  const restoring = ref(false);
+  /**
+   * Terminals from the saved file that could not be respawned this session --
+   * their cwd was renamed, unmounted, or their shell is no longer installed.
+   *
+   * They are kept so the next save writes them back out instead of erasing
+   * them. Losing a terminal because an external drive happened to be
+   * unplugged, permanently and with no warning, is the worst kind of quiet
+   * data loss. Cleared whenever the live set is cleared, so an unrestorable
+   * terminal from workspace A can never leak into workspace B's file.
+   */
+  const unrestoredTerminals = ref<import("@renderer/type/terminal").TerminalSession[]>([]);
   const selectedNoteIds = ref<Set<string>>(new Set());
   const selectedGroupIds = ref<Set<string>>(new Set());
   const selectedFileIds = ref<Set<string>>(new Set());
@@ -72,6 +87,26 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return !lastSavedAt.value || currentWorkspace.value.updatedAt > lastSavedAt.value;
   });
 
+  /**
+   * Record that something worth saving changed.
+   *
+   * Terminal state -- names, cwd, node geometry, open file drawers -- lives in
+   * terminalStore and only ever bumped its own per-session `updatedAt`, which
+   * `isDirty` never looks at. So renaming a terminal, letting an agent set its
+   * title, or opening a file drawer left the workspace looking clean, and
+   * closing the window discarded all of it with no prompt.
+   *
+   * Suppressed while `restoring` is set: loadWorkspace replays every saved
+   * terminal through these same mutations, and a workspace that reports itself
+   * dirty the instant it opens would prompt on every quit -- which trains
+   * people to click straight through the one dialog that protects their work.
+   */
+  function markDirty(): void {
+    if (restoring.value) return;
+    if (!currentWorkspace.value) return;
+    currentWorkspace.value.updatedAt = Date.now();
+  }
+
   const groups = computed(() => currentWorkspace.value?.groups || []);
 
   const groupCount = computed(() => currentWorkspace.value?.groups.length || 0);
@@ -87,7 +122,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   /**
    * Create a brand-new empty workspace and set it as current.
    */
-  function createNewWorkspace(name = "Untitled Workspace"): Workspace {
+  async function createNewWorkspace(name = "Untitled Workspace"): Promise<Workspace | null> {
+    // A new workspace starts empty. Without this, "New Workspace" from the
+    // Home screen only swapped the workspace object and left the previous
+    // workspace's live terminals on the canvas -- so two workspace files ended
+    // up claiming the same session ids, and the new one inherited the old
+    // one's prompt history on its first save.
+    if (!(await resetLiveSessions())) return null;
+
     const workspace: Workspace = {
       id: generateId("ws"),
       name,
@@ -119,7 +161,16 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
       // Sync terminal sessions from terminalStore
       const terminalStore = useTerminalStore();
-      currentWorkspace.value.terminals = terminalStore.allSessions.map((s) => ({ ...s }));
+      // Carry forward terminals that failed to restore, minus any the user has
+      // since recreated under the same id -- otherwise the save that follows a
+      // failed restore deletes them from the file for good.
+      const stillMissing = unrestoredTerminals.value.filter(
+        (t) => !terminalStore.sessions.has(t.id)
+      );
+      currentWorkspace.value.terminals = [
+        ...terminalStore.allSessions.map((s) => ({ ...s })),
+        ...stillMissing.map((s) => ({ ...s })),
+      ];
 
       // Sync prompt history from promptStore
       const promptStore = usePromptStore();
@@ -175,20 +226,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     currentWorkspace.value.files = ws.files ?? [];
     lastSavedAt.value = Date.now();
 
-    const terminalStore = useTerminalStore();
-    // Kill any real PTY processes left running from whatever was loaded
-    // before -- otherwise switching workspaces orphans them: they keep
-    // running in the main process even once the renderer stops referencing
-    // them here.
-    await Promise.all(
-      Array.from(terminalStore.sessions.keys()).map((sessionId) =>
-        window.api.terminal.kill(sessionId).catch(() => {})
-      )
-    );
-    terminalStore.sessions = new Map();
-    terminalStore.focusedTerminalId = null;
-    terminalStore.selectedTerminalIds = new Set();
+    if (!(await resetLiveSessions())) return null;
 
+    const terminalStore = useTerminalStore();
+    unrestoredTerminals.value = [];
+
+    // Everything below replays saved state through the normal mutations, which
+    // would otherwise mark the workspace dirty the moment it opened.
+    restoring.value = true;
+    try {
     // Recreate terminals with preserved layout (no command auto-run)
     for (const saved of ws.terminals) {
       try {
@@ -230,16 +276,78 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             saved.activeFile ?? null
           );
         }
+        // A coding agent was running here when the workspace was saved. The
+        // process itself is gone, so relaunch its CLI once the fresh shell's
+        // prompt appears -- with the agent's own resume flag where it has one,
+        // so the conversation actually comes back (see AGENT_RELAUNCH_COMMANDS).
+        if (saved.activeAgent) {
+          const cmd = AGENT_RELAUNCH_COMMANDS[saved.activeAgent];
+          if (cmd) {
+            terminalStore.scheduleAutoRun(session.id, cmd);
+            terminalStore.updateSession(session.id, { activeAgent: saved.activeAgent });
+          }
+        }
       } catch (err) {
         console.error("[Workspace] Failed to restore terminal", saved.id, err);
+        unrestoredTerminals.value.push({ ...saved, status: "exited", pid: null });
       }
+    }
+
+    if (unrestoredTerminals.value.length > 0) {
+      const n = unrestoredTerminals.value.length;
+      useUIStore().showToast(
+        n === 1
+          ? "1 terminal couldn't be restored (its folder or shell is missing) — it's been kept in the workspace"
+          : `${n} terminals couldn't be restored (their folders or shells are missing) — they've been kept in the workspace`
+      );
     }
 
     // Restore prompt history
     const promptStore = usePromptStore();
     promptStore.loadFromWorkspace(ws.promptHistory);
+    } finally {
+      restoring.value = false;
+    }
 
     return ws;
+  }
+
+  /**
+   * Tear down every live session so a different workspace can take over.
+   *
+   * PTYs live in the main process, so dropping the renderer's map is not
+   * enough -- the shells keep running with nothing referencing them. This also
+   * clears the two stores that `saveCurrentWorkspace` serializes but that are
+   * not per-workspace: prompt history (which would otherwise follow you into
+   * the next workspace and get written into its file) and the file store's
+   * per-terminal tabs (whose watchers would fire into components that no
+   * longer exist).
+   */
+  async function resetLiveSessions(): Promise<boolean> {
+    const terminalStore = useTerminalStore();
+    const fileStore = useFileStore();
+
+    const ids = Array.from(terminalStore.sessions.keys());
+
+    // Clearing the board drops every open file buffer, so ask once for the
+    // whole set rather than per terminal. False means the caller must abandon
+    // whatever it was doing -- nothing has been killed at this point.
+    const dirty = ids.flatMap((id) => fileStore.dirtyPathsForTerminal(id));
+    if (!(await fileStore.confirmDiscard(dirty))) return false;
+
+    await Promise.all(
+      ids.map((sessionId) => window.api.terminal.kill(sessionId).catch(() => {}))
+    );
+    for (const id of ids) {
+      fileStore.clearForTerminal(id);
+    }
+
+    terminalStore.sessions = new Map();
+    terminalStore.focusedTerminalId = null;
+    terminalStore.selectedTerminalIds = new Set();
+    usePromptStore().loadFromWorkspace([]);
+    unrestoredTerminals.value = [];
+    return true;
   }
 
   /**
@@ -250,7 +358,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
    */
   async function switchToWorkspace(id: string): Promise<Workspace | null> {
     if (currentWorkspace.value && currentWorkspace.value.id !== id) {
-      await saveCurrentWorkspace();
+      // A failed save must not fall through to loadWorkspace -- that kills
+      // every PTY and replaces currentWorkspace, so proceeding would destroy
+      // exactly the state the save was supposed to preserve. The store already
+      // toasts the failure.
+      if (!(await saveCurrentWorkspace())) return null;
     }
     return loadWorkspace(id);
   }
@@ -259,7 +371,17 @@ export const useWorkspaceStore = defineStore("workspace", () => {
    * Delete a saved workspace by ID.
    */
   async function deleteWorkspace(id: string): Promise<void> {
-    await window.api.workspace.delete(id);
+    // Main rethrows now (an unwritable directory, or an id that fails the
+    // filename check) rather than failing quietly, so the local list must only
+    // be updated once the file is really gone -- otherwise the workspace
+    // vanishes from the UI and comes back on the next launch.
+    try {
+      await window.api.workspace.delete(id);
+    } catch (err) {
+      console.error("[Workspace] Delete failed", err);
+      useUIStore().showToast("Couldn't delete that workspace");
+      return;
+    }
     workspaceList.value = workspaceList.value.filter((w) => w.id !== id);
     if (currentWorkspace.value?.id === id) {
       currentWorkspace.value = null;
@@ -274,7 +396,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   async function renameWorkspace(id: string, name: string): Promise<void> {
     const trimmed = name.trim();
     if (!trimmed) return;
-    await window.api.workspace.rename(id, trimmed);
+    try {
+      await window.api.workspace.rename(id, trimmed);
+    } catch (err) {
+      console.error("[Workspace] Rename failed", err);
+      useUIStore().showToast("Couldn't rename that workspace");
+      return;
+    }
     const entry = workspaceList.value.find((w) => w.id === id);
     if (entry) entry.name = trimmed;
     if (currentWorkspace.value?.id === id) {
@@ -736,6 +864,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     selectedFileIds.value = new Set(ids);
   }
 
+  /** Toggle a single file node in the selection (Ctrl/Cmd-click in Layers). */
+  function toggleFileSelected(id: string): void {
+    const newSet = new Set(selectedFileIds.value);
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
+    selectedFileIds.value = newSet;
+  }
+
   function clearFileSelection(): void {
     selectedFileIds.value.clear();
   }
@@ -822,6 +958,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     stickyNotes,
     fileNodes,
     // Actions
+    markDirty,
+    resetLiveSessions,
     createNewWorkspace,
     saveCurrentWorkspace,
     loadWorkspaceList,
@@ -851,6 +989,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     removeFileNode,
     unpinFilesForTerminal,
     setFileSelected,
+    toggleFileSelected,
     clearFileSelection,
     setNoteSelected,
     toggleNoteSelected,
@@ -861,4 +1000,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     updateSettings,
   };
 });
- 
+
+// Pinia caches store instances by id, so a hot-swapped store module would
+// otherwise leave every component bound to the instance built from the *old*
+// code -- newly added state and getters simply wouldn't exist on it, and the
+// symptom is a component rendering as if half its data vanished. This patches
+// the live instance instead. Dev only: `import.meta.hot` is undefined in a
+// production build, so the block drops out.
+if (import.meta.hot) {
+  import.meta.hot.accept(acceptHMRUpdate(useWorkspaceStore, import.meta.hot));
+}

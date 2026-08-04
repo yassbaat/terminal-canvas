@@ -71,4 +71,16 @@ export interface ActiveTerminal {
    * anything in this project folder.
    */
   releaseFileRoot: (() => void) | null;
+  /**
+   * Set when the shell has just printed a password/passphrase prompt, so the
+   * next submitted line is discarded instead of captured into Agent Memory.
+   *
+   * Prompt capture reads keystrokes on their way to the PTY, which means it
+   * sees input the terminal itself is deliberately not echoing. Without this
+   * flag a sudo/ssh/mysql password would be written verbatim into the saved
+   * workspace JSON (and, with AI naming on, sent to Groq -- a bare secret
+   * matches none of the redaction patterns). Cleared on the flush it
+   * suppresses.
+   */
+  echoSuppressed: boolean;
 }
